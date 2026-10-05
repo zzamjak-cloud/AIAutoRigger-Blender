@@ -28,6 +28,7 @@ class AIRIG_PT_main(bpy.types.Panel):
         row = layout.row()
         row.prop(state, "body_type")
         row.prop(state, "use_fingers")
+        row.prop(state, "use_face")
         layout.operator("airig.ai_auto_rig", icon="LIGHT_SUN")
         layout.operator("airig.auto_rig", icon="ARMATURE_DATA")
         row = layout.row(align=True)
@@ -41,6 +42,8 @@ class AIRIG_PT_main(bpy.types.Panel):
             box.label(text=f"리그: {state.rig_name} ({state.detected_type})")
             if state.detected_type == "BIPED":
                 box.label(text=f"손가락: {state.finger_count}개 (양손)")
+                if state.face_summary:
+                    box.label(text=state.face_summary)
             box.label(text=f"웨이트 없는 정점: {state.unweighted_vertices}")
             if state.ai_joints_used:
                 box.label(text=f"AI 반영 관절: {state.ai_joints_used} ({state.ai_backend_used})")

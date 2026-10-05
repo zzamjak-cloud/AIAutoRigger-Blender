@@ -30,6 +30,14 @@ for _s, _w in (("L", "Left"), ("R", "Right")):
             UNITY_BIPED[f"DEF-{_rigify}.{_n}.{_s}"] = f"{_w}{_unity}{_part}"
         UNITY_BIPED[f"DEF-{_rigify}.01.{_s}.001"] = f"{_w}{_unity}ProximalTwist"
 
+UNITY_BIPED.update({"DEF-jaw": "Jaw", "DEF-eye.L": "LeftEye", "DEF-eye.R": "RightEye"})
+for _s, _w in (("L", "Left"), ("R", "Right")):
+    for _k in range(1, 5):
+        UNITY_BIPED[f"DEF-palm.{_k:02d}.{_s}"] = f"{_w}Palm{_k}"
+# Unity 이름일 때 항상 합치는 본: 목 보조 본이 남으면 Unity 자동 매핑이 Head 자리에 Neck2 를 넣는다
+UNITY_MERGE = ("DEF-spine.005",)
+TWIST_BASES = ("upper_arm", "forearm", "thigh", "shin", "front_thigh", "front_shin")
+
 # Unity HumanBodyBones → 위 이름 (아바타 수동 매핑용 JSON)
 HUMANOID_BONES = (
     "Hips", "Spine", "Chest", "UpperChest", "Neck", "Head",
@@ -37,6 +45,7 @@ HUMANOID_BONES = (
       ("Shoulder", "UpperArm", "LowerArm", "Hand", "UpperLeg", "LowerLeg", "Foot", "Toes")],
     *[f"{w}{f}{p}" for w in ("Left", "Right") for f in ("Thumb", "Index", "Middle", "Ring", "Little")
       for p in ("Proximal", "Intermediate", "Distal")],
+    "Jaw", "LeftEye", "RightEye",
 )
 GAME_TAG = "airig_game"
 
@@ -85,9 +94,39 @@ def _deform_parent_map(rig, metarig):
     return parents
 
 
-def build_game_armature(context, rig, metarig, mesh, naming="RIGIFY"):
-    """(게임 아마추어, 메시 복제본). naming='UNITY' 면 2족 본을 Unity 이름으로 바꾼다."""
+def merge_set(names, naming, simplify):
+    """내보낼 때 부모에 합칠 DEF 본. simplify 는 트위스트 분절·손바닥·골반을 합쳐 본 수를 줄인다."""
+    merged = set()
+    if naming == "UNITY":
+        merged.update(n for n in UNITY_MERGE if n in names)
+    if simplify:
+        for n in names:
+            base = n[4:] if n.startswith("DEF-") else n
+            stem = base.rsplit(".", 2)[0] if base.count(".") >= 2 else base.split(".")[0]
+            if base.endswith(".001") and stem in TWIST_BASES:
+                merged.add(n)
+            elif base.startswith(("palm.", "pelvis.")):
+                merged.add(n)
+    return merged
+
+
+def build_game_armature(context, rig, metarig, mesh, naming="RIGIFY", simplify=False):
+    """(게임 아마추어, 메시 복제본). naming='UNITY' 면 2족 본을 Unity 이름으로 바꾼다.
+
+    합칠 본(merge_set)은 만들지 않고, 그 자식은 가장 가까운 남는 조상에 붙이며 웨이트는 그 조상 그룹에 더한다.
+    """
     parents = _deform_parent_map(rig, metarig)
+    merged = merge_set(set(parents), naming, simplify)
+
+    def survivor(name):
+        while name in merged:
+            name = parents[name]
+        return name
+
+    merge_into = {n: survivor(parents[n]) for n in merged}
+    # 위 survivor 가 원래 부모 표를 참조하므로 남는 본의 부모 표는 다른 이름으로 만든 뒤 바꾼다
+    kept_parents = {n: (survivor(p) if p else None) for n, p in parents.items() if n not in merged}
+    parents = kept_parents
     rename = UNITY_BIPED if naming == "UNITY" else {}
     data = bpy.data.armatures.new(f"{rig.name}_game")
     game = bpy.data.objects.new(f"{rig.name}_game", data)
@@ -133,10 +172,37 @@ def build_game_armature(context, rig, metarig, mesh, naming="RIGIFY"):
     for m in copy.modifiers:
         if m.type == "ARMATURE":
             m.object = game
+    _merge_weights(copy, merge_into)
     for vg in copy.vertex_groups:
         if vg.name in rename:
             vg.name = rename[vg.name]
     return game, copy
+
+
+def _merge_weights(mesh_obj, merge_into):
+    """합친 본의 웨이트를 대상 본 그룹에 더하고 원래 그룹을 지운다 (정점은 한 번만 훑는다)."""
+    vgs = mesh_obj.vertex_groups
+    for dst in set(merge_into.values()):
+        if vgs.get(dst) is None:
+            vgs.new(name=dst)
+    src_to_dst = {vgs[s].index: vgs[d] for s, d in merge_into.items() if vgs.get(s) is not None}
+    if not src_to_dst:
+        return
+    adds: dict = {}
+    for v in mesh_obj.data.vertices:
+        cur = {g.group: g.weight for g in v.groups}
+        extra = {}
+        for gi, w in cur.items():
+            dg = src_to_dst.get(gi)
+            if dg is not None and w > 0.0:
+                extra[dg.index] = extra.get(dg.index, cur.get(dg.index, 0.0)) + w
+        for di, w in extra.items():
+            adds.setdefault((di, round(min(1.0, w), 6)), []).append(v.index)
+    by_index = {g.index: g for g in vgs}
+    for (di, w), verts in adds.items():
+        by_index[di].add(verts, w, "REPLACE")
+    for s in [s for s in merge_into if vgs.get(s) is not None]:
+        vgs.remove(vgs[s])
 
 
 def remove_game_objects():
@@ -149,7 +215,7 @@ def remove_game_objects():
             bpy.data.meshes.remove(data)
 
 
-def export_fbx(context, rig, metarig, mesh, filepath, naming="RIGIFY", bake_anim=True):
+def export_fbx(context, rig, metarig, mesh, filepath, naming="RIGIFY", bake_anim=True, simplify=False):
     """FBX 와 (UNITY 이름일 때) Humanoid 매핑 JSON 을 쓴다. 반환: 내보낸 본 수."""
     filepath = pathlib.Path(filepath)
     filepath.parent.mkdir(parents=True, exist_ok=True)
@@ -159,7 +225,7 @@ def export_fbx(context, rig, metarig, mesh, filepath, naming="RIGIFY", bake_anim
     saved_selection = [o for o in context.view_layer.objects if o is not None and o.select_get()]
     saved_active = context.view_layer.objects.active
     try:
-        game, copy = build_game_armature(context, rig, metarig, mesh, naming)
+        game, copy = build_game_armature(context, rig, metarig, mesh, naming, simplify)
         for o in context.view_layer.objects:
             if o is not None:
                 o.select_set(o in (game, copy))

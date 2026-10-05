@@ -124,7 +124,7 @@ fingers = [f"{w}{f}{p}" for w in ("Left", "Right") for f in ("Thumb", "Index", "
            for p in ("Proximal", "Intermediate", "Distal")]
 check(all(f in mapping for f in fingers), "Humanoid JSON 에 손가락 24개")
 arm, mesh = reimport(path)
-check(arm.data.bones["LeftIndexProximal"].parent.name.startswith("DEF-palm"), "LeftIndexProximal → 손바닥 본")
+check(arm.data.bones["LeftIndexProximal"].parent.name.startswith("LeftPalm"), "LeftIndexProximal → 손바닥 본(LeftPalmN)")
 check("LeftHand" in ancestors(arm.data.bones["LeftThumbDistal"]), "엄지가 LeftHand 계층 아래")
 
 # 4족: Rigify 이름 유지, 단일 루트

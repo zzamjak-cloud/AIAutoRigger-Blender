@@ -1,6 +1,9 @@
+import json
+
 import bpy
 
-from ..bridge import mesh_io, rigify_bridge
+from ..bridge import mesh_io, rigify_bridge, weights
+from ..core import face as face_core
 from ..core import fingers as finger_core
 from ..core.biped_landmarks import estimate_biped
 from ..core.body_type import QUADRUPED, classify
@@ -19,7 +22,7 @@ def _mesh_poll(context):
 class Estimate:
     """휴리스틱 관절 추정 결과 (AI 단계 입력으로도 쓰인다)."""
 
-    def __init__(self, kind, joints, facing, size, has_tail, symmetric, warnings, fingers=None):
+    def __init__(self, kind, joints, facing, size, has_tail, symmetric, warnings, fingers=None, face=None):
         self.kind = kind
         self.joints = joints
         self.facing = facing
@@ -28,6 +31,7 @@ class Estimate:
         self.symmetric = symmetric
         self.warnings = list(warnings)
         self.fingers = fingers or {}
+        self.face = face
 
 
 def estimate(context, mesh_obj):
@@ -48,7 +52,40 @@ def estimate(context, mesh_obj):
     est = Estimate(kind, lm.joints, lm.facing, max(analysis.dimensions), False, symmetric, lm.warnings)
     if context.scene.airig.use_fingers:
         est.fingers = detect_hand_fingers(context, mesh_obj, est)
+    if context.scene.airig.use_face:
+        est.face = detect_face(mesh_obj, head_points(context, mesh_obj, est), est)
     return est
+
+
+def head_points(context, mesh_obj, est, count=60000):
+    """목 위 삼각형만 촘촘히 샘플링한다 (전신 샘플로는 얼굴 정면 띠의 밀도가 부족하다)."""
+    from ..core.sampling import sample_surface
+
+    verts, tris = mesh_io.world_geometry(context, mesh_obj)
+    z0 = est.joints["neck_base"][2]
+    head_tris = [t for t in tris if max(verts[i][2] for i in t) > z0]
+    return sample_surface(verts, head_tris, count, seed=1) if head_tris else []
+
+
+def detect_face(mesh_obj, points, est):
+    """턱(입 오목이 보일 때)과 눈(눈동자가 별도 메시 조각일 때)."""
+    j = est.joints
+    cx = j["head_base"][0]
+    jaw, why = face_core.detect_jaw(points, j["neck_base"], j["head_top"], cx, est.facing)
+    if jaw is None:
+        est.warnings.append(why)
+    head = [p for p in points if p[2] > j["head_base"][2]]
+    xs = [p[0] for p in head] or [cx]
+    head_w = max(xs) - min(xs)
+    center = (cx, sum(p[1] for p in head) / max(1, len(head)), 0.5 * (j["head_base"][2] + j["head_top"][2]))
+    parts = mesh_io.islands(mesh_obj)
+    eyes = []
+    if len(parts) > 1:
+        eyes = face_core.pick_eyes([(c, r, i) for i, (_v, c, r) in enumerate(parts)], center, head_w,
+                                   j["head_top"][2], jaw.lip_z if jaw else None, est.facing)
+    if not eyes:
+        est.warnings.append("눈동자가 별도 메시 조각이 아니어서 눈 본을 만들지 않았습니다.")
+    return face_core.Face(jaw, eyes)
 
 
 def detect_hand_fingers(context, mesh_obj, est):
@@ -77,11 +114,17 @@ def detect_hand_fingers(context, mesh_obj, est):
 def apply_metarig(op, context, mesh_obj, est):
     metarig = rigify_bridge.build_metarig(
         context, est.kind, est.joints, f"{mesh_obj.name}_metarig",
-        has_tail=est.has_tail, facing=est.facing, symmetric=est.symmetric, fingers=est.fingers,
+        has_tail=est.has_tail, facing=est.facing, symmetric=est.symmetric, fingers=est.fingers, face=est.face,
     )
     state = context.scene.airig
     state.detected_type = est.kind
     state.finger_count = sum(len(h.fingers) for h in est.fingers.values())
+    parts = []
+    if est.face and est.face.jaw:
+        parts.append("턱")
+    if est.face and est.face.eyes:
+        parts.append("눈")
+    state.face_summary = ("얼굴: " + ", ".join(parts)) if parts else ""
     state.target_mesh = mesh_obj.name
     state.metarig_name = metarig.name
     state.warnings = " / ".join(est.warnings)
@@ -103,6 +146,10 @@ def generate_and_bind(op, context):
         return None
     rig = rigify_bridge.generate_rig(context, metarig, f"{mesh_obj.name}_rig")
     unweighted = rigify_bridge.bind_mesh(context, mesh_obj, rig)
+    face_data = metarig.get("airig_face")
+    if face_data:
+        weights.apply_face_weights(mesh_obj, face_core.Face.from_dict(json.loads(face_data)), mesh_io.islands(mesh_obj))
+        unweighted = weights.count_unweighted(mesh_obj, {b.name for b in rig.data.bones if b.use_deform})
     state.rig_name = rig.name
     state.unweighted_vertices = unweighted
     if unweighted:

@@ -7,9 +7,10 @@ from collections import defaultdict
 import bpy
 from mathutils import Euler, Matrix, Vector
 
+from ..core import face as face_core
 from ..core import fingers
 from ..core.landmark_merge import enforce_bends
-from . import rigify_bridge, views, weights
+from . import mesh_io, rigify_bridge, views, weights
 
 # 포즈 이름 → [(제어 본, 이동량(크기 대비, x/정면/z), 회전 Euler 또는 None)]
 # 이동량의 두 번째 성분은 정면 방향 기준이며 실제 Y 부호는 캐릭터 정면에 맞춰 바꾼다
@@ -163,10 +164,16 @@ def apply_proposals(context, proposals):
         has_tail = bool(metarig.get("airig_has_tail", False))
         name = metarig.name
         hands = {s: fingers.HandFingers.from_dict(d) for s, d in json.loads(metarig.get("airig_fingers", "{}")).items()}
+        face_json = metarig.get("airig_face") or ""
+        face_data = face_core.Face.from_dict(json.loads(face_json)) if face_json else None
         new_meta = rigify_bridge.build_metarig(context, kind, joints, name, has_tail=has_tail,
-                                               facing=facing, symmetric=symmetric, fingers=hands)
+                                               facing=facing, symmetric=symmetric, fingers=hands, face=face_data)
         rig = rigify_bridge.generate_rig(context, new_meta, rig.name)
         context.scene.airig.unweighted_vertices = rigify_bridge.bind_mesh(context, mesh, rig)
+        if face_data is not None:
+            weights.apply_face_weights(mesh, face_data, mesh_io.islands(mesh))
+            context.scene.airig.unweighted_vertices = weights.count_unweighted(
+                mesh, {b.name for b in rig.data.bones if b.use_deform})
     smoothed = 0
     for p in proposals:
         if p.kind == "smooth_weights" and weights.smooth_group(mesh, p.target, p.iterations):

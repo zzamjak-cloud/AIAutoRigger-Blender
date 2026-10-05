@@ -197,7 +197,7 @@ def detect_fingers(
         dist_new, _ = _dijkstra(adj, coords, [v])
         for k, val in dist_new.items():
             tip_dist[k] = min(tip_dist.get(k, float("inf")), val)
-    if len(tips) < 2:
+    if not tips:
         return None
 
     h = [_dijkstra(adj, coords, [t])[0] for t in tips]
@@ -238,9 +238,18 @@ def detect_fingers(
         chain = list(reversed(centers))
         tip_point = coords[t]
         chain.append(_add(chain[-1], _mul(_sub(tip_point, chain[-1]), 0.7)))
-        raw.append((chain, base_s if base_s is not None else g[t]))
+        raw.append((chain, base_s, median(widths) if widths else 0.0))
 
-    if len(raw) < 2:
+    # 한 덩어리뿐이면 손바닥과 확실히 구분될 때(뿌리 검출 + 적당한 길이)만 손가락 덩어리로 인정한다.
+    # 상자형 손처럼 뿌리가 없으면 손 본만 둔다.
+    if len(raw) == 1:
+        chain, base_s, _w = raw[0]
+        length = sum(_len(_sub(chain[k + 1], chain[k])) for k in range(len(chain) - 1))
+        # 손가락 마디선(뿌리)이 손목에서 충분히 떨어져 있어야 손바닥과 구분되는 덩어리다
+        knuckle_far = _len(_sub(chain[0], wrist)) >= 0.3 * hand_len
+        if base_s is None or not knuckle_far or not (0.25 * hand_len <= length <= 0.65 * hand_len):
+            return None
+    elif not raw:
         return None
 
     def resample(chain):
@@ -258,18 +267,28 @@ def detect_fingers(
         out.append(chain[-1])
         return out
 
-    fingers = [resample(c) for c, _ in raw]
+    fingers = [resample(c) for c, _b, _w in raw]
+    widths = [w for _c, _b, w in raw]
     warnings = []
 
-    # 엄지: 뿌리가 손목에 가장 가까운 손가락이 나머지보다 확실히 가까울 때
+    # 엄지: 뿌리가 손목에 가장 가까운 손가락이 나머지보다 확실히 가까울 때.
+    # 손가락이 2개면(엄지 + 손가락 덩어리) 폭이 확실히 좁은 쪽도 엄지로 본다
     thumb_idx = None
-    if len(fingers) >= 3:
+    lump = False
+    if len(fingers) >= 2:
         order = sorted(range(len(fingers)), key=lambda k: _len(_sub(fingers[k][0], wrist)))
         near, rest = order[0], order[1:]
         if _len(_sub(fingers[near][0], wrist)) < 0.8 * median(_len(_sub(fingers[k][0], wrist)) for k in rest):
             thumb_idx = near
-    elif len(fingers) == 2:
-        warnings.append("손가락이 2개뿐이라 엄지 판별 없이 검지·중지로 이름 붙였습니다.")
+        if len(fingers) == 2:
+            narrow, wide = sorted(range(2), key=lambda k: widths[k])
+            # 거리 기준과 폭 기준이 다른 손가락을 가리키면 거리 기준을 따른다
+            if widths[wide] > 1.5 * max(widths[narrow], 1e-9) and thumb_idx in (None, narrow):
+                thumb_idx, lump = narrow, True
+            elif thumb_idx is None:
+                warnings.append("손가락이 2개뿐이라 엄지 판별 없이 검지·중지로 이름 붙였습니다.")
+    if len(fingers) == 1:
+        lump = True
 
     others = [k for k in range(len(fingers)) if k != thumb_idx]
     # 손바닥을 가로지르는 순서로 정렬한다. 뿌리끼리는 거의 붙어 있을 수 있어 손가락 전체 중심을 쓴다
@@ -283,8 +302,13 @@ def detect_fingers(
     named = []
     if thumb_idx is not None:
         named.append(Finger("thumb", fingers[thumb_idx]))
-    for name, k in zip(FINGER_NAMES, others):
-        named.append(Finger(name, fingers[k]))
+    if lump and len(others) == 1:
+        # 갈라지지 않은 손가락 덩어리는 가운데 손가락 하나로 리깅해 한꺼번에 굽힌다
+        named.append(Finger("f_middle", fingers[others[0]]))
+        warnings.append("손가락이 갈라지지 않은 덩어리라 하나의 손가락 체인으로 만들었습니다.")
+    else:
+        for name, k in zip(FINGER_NAMES, others):
+            named.append(Finger(name, fingers[k]))
 
     # 손등 방향: 손가락이 굽은 반대쪽. 거의 곧으면 손 축에 수직인 세계 위쪽(없으면 바깥쪽)
     bend = (0.0, 0.0, 0.0)

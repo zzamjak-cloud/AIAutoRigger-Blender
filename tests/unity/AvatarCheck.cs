@@ -28,7 +28,9 @@ public static class AvatarCheck
         var wrong = Required.Where(r => mapped.ContainsKey(r) && mapped[r] != r).ToArray();
         bool ok = avatar != null && avatar.isValid && avatar.isHuman && missing.Length == 0 && wrong.Length == 0;
 
-        var report = $"{{\"model\":\"{path}\",\"valid\":{(avatar != null && avatar.isValid).ToString().ToLower()}," +
+        var optional = new[] { "Jaw", "LeftEye", "RightEye", "Left Thumb Proximal", "Left Index Proximal", "Left Middle Proximal", "Left Ring Proximal" }
+            .Where(mapped.ContainsKey).Select(o => $"\"{o}:{mapped[o]}\"");
+        var report = $"{{\"model\":\"{path}\",\"optional\":[{string.Join(",", optional)}],\"valid\":{(avatar != null && avatar.isValid).ToString().ToLower()}," +
                      $"\"human\":{(avatar != null && avatar.isHuman).ToString().ToLower()},\"mapped\":{mapped.Count}," +
                      $"\"missing\":[{string.Join(",", missing.Select(m => $"\"{m}\""))}]," +
                      $"\"mismatched\":[{string.Join(",", wrong.Select(m => $"\"{m}:{mapped[m]}\""))}]}}";

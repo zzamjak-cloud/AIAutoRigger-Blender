@@ -143,10 +143,35 @@ def _add_fingers(metarig, ebones, side, hand):
             eb.align_roll(dorsal)
             created.append(eb.name)
             prev = eb
-    return created, palms[0].name if palms else None, [f"{f.name}.01.{side}" for f in hand.fingers]
+    return created, [p.name for p in palms], [f"{f.name}.01.{side}" for f in hand.fingers]
 
 
-def build_metarig(context, kind, joints, name, has_tail=True, facing="-Y", symmetric=False, fingers=None):
+def _add_face(ebones, face, facing):
+    """턱(jaw)·눈(eye.L/R) 본을 머리 본 아래에 추가한다. 반환: {본 이름: rigify_type}."""
+    from mathutils import Vector
+
+    head = ebones["spine.006"]
+    front = Vector((0.0, -1.0 if facing == "-Y" else 1.0, 0.0))
+    types = {}
+    if face.jaw is not None:
+        eb = ebones.new("jaw")
+        eb.head = Vector(face.jaw.pivot)
+        eb.tail = Vector(face.jaw.chin)
+        eb.parent = head
+        # Z축을 아래로 두면 로컬 +X 회전이 입을 여는 방향이 된다
+        eb.align_roll(Vector((0.0, 0.0, -1.0)))
+        types["jaw"] = "basic.super_copy"
+    for eye in face.eyes:
+        eb = ebones.new(f"eye.{eye.side}")
+        eb.head = Vector(eye.center)
+        eb.tail = Vector(eye.center) + front * max(eye.radius, 0.005) * 1.5
+        eb.parent = head
+        eb.align_roll(Vector((0.0, 0.0, 1.0)))
+        types[eb.name] = "basic.super_copy"
+    return types
+
+
+def build_metarig(context, kind, joints, name, has_tail=True, facing="-Y", symmetric=False, fingers=None, face=None):
     """체형별 basic 메타리그를 만들고 관절 위치로 본을 재배치한다."""
     ensure_rigify()
     if context.mode != "OBJECT":
@@ -204,16 +229,22 @@ def build_metarig(context, kind, joints, name, has_tail=True, facing="-Y", symme
         rig_types = {}
         if kind == "BIPED" and fingers:
             for side, hand in fingers.items():
-                _created, palm_root, finger_roots = _add_fingers(metarig, ebones, side, hand)
-                if palm_root:
-                    rig_types[palm_root] = "limbs.super_palm"
+                _created, palm_names, finger_roots = _add_fingers(metarig, ebones, side, hand)
+                if len(palm_names) >= 2:
+                    rig_types[palm_names[0]] = "limbs.super_palm"
+                elif palm_names:
+                    # super_palm 은 형제 손바닥 본이 2개 이상이어야 하므로 하나뿐이면 단순 복사 본으로 둔다
+                    rig_types[palm_names[0]] = "basic.super_copy"
                 for root in finger_roots:
                     rig_types[root] = "limbs.super_finger"
+        if kind == "BIPED" and face is not None:
+            rig_types.update(_add_face(ebones, face, facing))
     finally:
         bpy.ops.object.mode_set(mode="OBJECT")
     for bone_name, rig_type in rig_types.items():
         metarig.pose.bones[bone_name].rigify_type = rig_type
     metarig["airig_fingers"] = json.dumps({s: h.to_dict() for s, h in (fingers or {}).items()})
+    metarig["airig_face"] = json.dumps(face.to_dict()) if face is not None else ""
     return metarig
 
 

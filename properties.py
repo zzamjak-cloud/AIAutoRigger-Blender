@@ -32,6 +32,8 @@ class AIRIG_PG_state(bpy.types.PropertyGroup):
     detected_type: bpy.props.StringProperty(name="Detected Type")
     use_fingers: bpy.props.BoolProperty(name="Fingers", description="2족 손가락을 감지해 Rigify 손가락 리그를 만든다", default=True)
     finger_count: bpy.props.IntProperty(name="Finger Count", min=0)
+    use_face: bpy.props.BoolProperty(name="Jaw / Eyes", description="2족 턱(입 오목이 보일 때)·눈(눈동자가 별도 조각일 때) 본을 만든다", default=True)
+    face_summary: bpy.props.StringProperty(name="Face")
     target_mesh: bpy.props.StringProperty(name="Target Mesh")
     metarig_name: bpy.props.StringProperty(name="Metarig")
     rig_name: bpy.props.StringProperty(name="Control Rig")

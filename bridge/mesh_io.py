@@ -52,3 +52,33 @@ def hand_graph(context, obj, wrist, hand_tip, radius_ratio=2.4, edge_ratio=0.03)
     finally:
         bm.free()
     return verts, edges
+
+
+def islands(obj):
+    """메시 연결 성분: [(정점 인덱스 목록, 월드 중심, 반지름)]. obj.data 기준 (웨이트 지정용 인덱스와 일치)."""
+    me = obj.data
+    adj = [[] for _ in me.vertices]
+    for e in me.edges:
+        a, b = e.vertices
+        adj[a].append(b)
+        adj[b].append(a)
+    seen = [False] * len(me.vertices)
+    mw = obj.matrix_world
+    out = []
+    for s in range(len(me.vertices)):
+        if seen[s]:
+            continue
+        seen[s] = True
+        stack, comp = [s], []
+        while stack:
+            v = stack.pop()
+            comp.append(v)
+            for n in adj[v]:
+                if not seen[n]:
+                    seen[n] = True
+                    stack.append(n)
+        co = [mw @ me.vertices[i].co for i in comp]
+        lo = Vector((min(c.x for c in co), min(c.y for c in co), min(c.z for c in co)))
+        hi = Vector((max(c.x for c in co), max(c.y for c in co), max(c.z for c in co)))
+        out.append((comp, tuple((lo + hi) * 0.5), 0.5 * max(hi - lo)))
+    return out

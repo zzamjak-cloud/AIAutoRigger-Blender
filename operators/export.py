@@ -22,6 +22,11 @@ class AIRIG_OT_export_fbx(bpy.types.Operator, ExportHelper):
         default="UNITY",
     )
     bake_anim: bpy.props.BoolProperty(name="Bake Animation", default=True)
+    simplify: bpy.props.BoolProperty(
+        name="Simplify Bones",
+        description="트위스트·손바닥·골반 본을 부모에 합쳐 본 수를 줄인다 (모바일·군중용). 팔뚝 비틀림 표현은 줄어든다",
+        default=False,
+    )
 
     @classmethod
     def poll(cls, context):
@@ -43,7 +48,7 @@ class AIRIG_OT_export_fbx(bpy.types.Operator, ExportHelper):
             return {"CANCELLED"}
         naming = self.naming if state.detected_type != "QUADRUPED" else "RIGIFY"
         try:
-            count = export.export_fbx(context, rig, metarig, mesh, self.filepath, naming, self.bake_anim)
+            count = export.export_fbx(context, rig, metarig, mesh, self.filepath, naming, self.bake_anim, self.simplify)
         except (ValueError, RuntimeError) as exc:
             self.report({"ERROR"}, str(exc))
             return {"CANCELLED"}

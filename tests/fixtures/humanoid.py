@@ -19,6 +19,14 @@ VARIANTS = {
 FINGER_VARIANTS = {
     "fingers_straight_t": dict(head=1.0, leg=1.0, arm=1.0, arm_angle=0.0, fingers="straight"),
     "fingers_claw_a": dict(head=1.0, leg=1.0, arm=1.0, arm_angle=40.0, fingers="claw"),
+    # 엄지 + 갈라지지 않은 손가락 덩어리 (벙어리장갑형)
+    "mitten_thumb_t": dict(head=1.0, leg=1.0, arm=1.0, arm_angle=0.0, fingers="mitten"),
+}
+# 변형별 손당 기대 손가락
+EXPECTED_FINGERS = {
+    "fingers_straight_t": ("thumb", "f_index", "f_middle", "f_ring"),
+    "fingers_claw_a": ("thumb", "f_index", "f_middle", "f_ring"),
+    "mitten_thumb_t": ("thumb", "f_middle"),
 }
 FINGERS = ("thumb", "f_index", "f_middle", "f_ring")
 
@@ -90,9 +98,15 @@ def hand_parts(wrist, direction, side_sign, style):
     # 손 섬이 손목 고리를 포함하도록 팔뚝 쪽으로 6cm 늘린다 (실제 메시처럼 손목에서 측지 거리 출발)
     parts.append(_segment_box(add(wrist, direction, -0.06), add(wrist, direction, 0.005), 0.07, 0.07))
     parts.append(_segment_box(add(wrist, direction, -0.005), knuckle, 0.075, 0.026))
-    bends = {"straight": (0.0, 0.0, 0.0), "claw": (rad(20), rad(35), rad(30))}[style]
+    bends = {"straight": (0.0, 0.0, 0.0), "claw": (rad(20), rad(35), rad(30)), "mitten": (0.0, 0.0, 0.0)}[style]
     lengths = (0.035, 0.026, 0.02)
     offsets = {"f_index": 0.024, "f_middle": 0.0, "f_ring": -0.024}
+    if style == "mitten":
+        # 손가락 4개가 붙은 덩어리: 손바닥보다 약간 좁고 얇다
+        tip = add(knuckle, direction, 0.075)
+        parts.append(_segment_box(add(knuckle, direction, -0.01), tip, 0.068, 0.02))
+        gt["f_middle_base"], gt["f_middle_tip"] = knuckle, tip
+        offsets = {}
     for name, off in offsets.items():
         p = add(knuckle, across, off)
         gt[f"{name}_base"] = p
@@ -184,3 +198,43 @@ def build_from(cfg: dict, split_hands: bool = False):
     if split_hands:
         return (*mesh(parts), gt, *mesh(hand_boxes))
     return (*mesh(parts + hand_boxes), gt)
+
+
+def build_face_variant(cfg: dict | None = None):
+    """입을 벌린 머리 + 별도 조각 눈동자. (몸 정점, 몸 삼각형, 정답, 머리 정점, 머리 삼각형, 눈 정점, 눈 삼각형).
+
+    머리는 입 틈(2cm)이 리메시로 메워지지 않도록 별도 섬으로 촘촘히 리메시하고, 눈동자는 리메시하지 않는 별도 조각이다.
+    """
+    cfg = dict(cfg or VARIANTS["realistic_t"])
+    bv, bt, gt = build_from(cfg)
+    # build_from 의 머리 상자를 빼고 다시 만든다 (몸 메시는 상자 8정점 단위)
+    head_base = gt["head_base"]
+    hb, hh = head_base[2], gt["head_top"][2] - head_base[2]
+    hx, hy = 0.1, 0.11
+    nverts = len(bv) - 8
+    bv, bt = bv[:nverts], [t for t in bt if max(t) < nverts]
+    lip = hb + 0.3 * hh
+    boxes = [
+        _box((0.0, hy / 2, hb + hh / 2), (hx, hy / 2, hh / 2)),                       # 뒤통수
+        _box((0.0, -hy / 2, (lip + 0.01 + hb + hh) / 2), (hx, hy / 2, (hb + hh - lip - 0.01) / 2)),  # 윗얼굴
+        _box((0.0, -0.1 / 2, (hb + lip - 0.01) / 2), (hx * 0.9, 0.1 / 2, (lip - 0.01 - hb) / 2)),  # 아래턱
+    ]
+    eyes = []
+    for s in (1.0, -1.0):
+        c = (s * 0.045, -hy + 0.005, lip + 0.09)
+        eyes.append(_box(c, (0.015, 0.015, 0.015)))
+        gt[f"eye_{'L' if s > 0 else 'R'}"] = c
+    gt["lip_z"] = lip
+    gt["chin_bottom_z"] = hb
+
+    def mesh(bx):
+        verts, tris = [], []
+        for p in bx:
+            base = len(verts)
+            verts.extend(p)
+            tris.extend((base + a, base + b, base + c) for a, b, c in _BOX_TRIS)
+        return verts, tris
+
+    hv, ht = mesh(boxes)
+    ev, et = mesh(eyes)
+    return bv, bt, gt, hv, ht, ev, et
