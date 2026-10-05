@@ -28,8 +28,9 @@ jobs:
     steps:
       - name: Blender 설치
         run: |
-          curl -fsSL "https://download.blender.org/release/Blender${BLENDER_SERIES}/blender-${BLENDER_VERSION}-linux-x64.tar.xz" -o blender.tar.xz
-          mkdir blender && tar -xf blender.tar.xz -C blender --strip-components=1
+          curl -fsSL "https://download.blender.org/release/Blender${BLENDER_SERIES}/blender-${BLENDER_VERSION}-linux-x64.tar.xz" -o "$RUNNER_TEMP/blender.tar.xz"
+          # 저장소 밖에 풀어야 Extension 빌드에 섞이지 않는다
+          mkdir "$RUNNER_TEMP/blender" && tar -xf "$RUNNER_TEMP/blender.tar.xz" -C "$RUNNER_TEMP/blender" --strip-components=1
       - name: 최신 릴리스 ZIP 수집
         env:
           GH_TOKEN: ${{ github.token }}
@@ -40,7 +41,7 @@ jobs:
           ls -la site
       - name: index.json 생성
         run: |
-          blender/blender --factory-startup --command extension server-generate --repo-dir=site --html
+          "$RUNNER_TEMP/blender/blender" --factory-startup --command extension server-generate --repo-dir=site --html
           test -s site/index.json
       - uses: actions/upload-pages-artifact@v3
         with:

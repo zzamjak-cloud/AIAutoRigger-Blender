@@ -49,6 +49,11 @@ class DistributionTest(unittest.TestCase):
         # 같은 플랫폼 다중 버전은 업데이트를 막으므로 최신 릴리스만 수집해야 한다
         self.assertIn("gh release view", pages)
         self.assertNotIn("gh release list", pages)
+        # CI 가 내려받은 Blender 가 패키지에 섞이지 않도록 저장소 밖에 설치해야 한다
+        for wf in (check, release, pages):
+            self.assertNotIn("mkdir blender ", wf)
+            self.assertIn('$RUNNER_TEMP/blender', wf)
+        self.assertIn("52428800", release)
 
     def test_readme_separates_dev_and_user_install(self):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")

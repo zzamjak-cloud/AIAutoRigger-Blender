@@ -21,9 +21,10 @@ jobs:
         run: python -m unittest discover -s tests -v
       - name: Blender 설치
         run: |
-          curl -fsSL "https://download.blender.org/release/Blender${BLENDER_SERIES}/blender-${BLENDER_VERSION}-linux-x64.tar.xz" -o blender.tar.xz
-          mkdir blender && tar -xf blender.tar.xz -C blender --strip-components=1
-          echo "BLENDER=$PWD/blender/blender" >> "$GITHUB_ENV"
+          curl -fsSL "https://download.blender.org/release/Blender${BLENDER_SERIES}/blender-${BLENDER_VERSION}-linux-x64.tar.xz" -o "$RUNNER_TEMP/blender.tar.xz"
+          # 저장소 밖에 풀어야 Extension 빌드에 섞이지 않는다
+          mkdir "$RUNNER_TEMP/blender" && tar -xf "$RUNNER_TEMP/blender.tar.xz" -C "$RUNNER_TEMP/blender" --strip-components=1
+          echo "BLENDER=$RUNNER_TEMP/blender/blender" >> "$GITHUB_ENV"
       - name: SDK wheel 준비
         run: python scripts/fetch_wheels.py
       - name: Extension 검증·빌드

@@ -27,15 +27,18 @@ jobs:
         run: python -m unittest discover -s tests
       - name: Blender 설치
         run: |
-          curl -fsSL "https://download.blender.org/release/Blender${BLENDER_SERIES}/blender-${BLENDER_VERSION}-linux-x64.tar.xz" -o blender.tar.xz
-          mkdir blender && tar -xf blender.tar.xz -C blender --strip-components=1
+          curl -fsSL "https://download.blender.org/release/Blender${BLENDER_SERIES}/blender-${BLENDER_VERSION}-linux-x64.tar.xz" -o "$RUNNER_TEMP/blender.tar.xz"
+          # 저장소 밖에 풀어야 Extension 빌드에 섞이지 않는다
+          mkdir "$RUNNER_TEMP/blender" && tar -xf "$RUNNER_TEMP/blender.tar.xz" -C "$RUNNER_TEMP/blender" --strip-components=1
       - name: 플랫폼별 Extension 빌드
         run: |
           python scripts/fetch_wheels.py
-          blender/blender --factory-startup --command extension validate .
+          "$RUNNER_TEMP/blender/blender" --factory-startup --command extension validate .
           mkdir -p dist
-          blender/blender --factory-startup --command extension build --split-platforms --source-dir . --output-dir dist
-          for z in dist/*.zip; do blender/blender --factory-startup --command extension validate "$z"; done
+          "$RUNNER_TEMP/blender/blender" --factory-startup --command extension build --split-platforms --source-dir . --output-dir dist
+          for z in dist/*.zip; do "$RUNNER_TEMP/blender/blender" --factory-startup --command extension validate "$z"; done
+          # 패키지에 불필요한 파일이 섞이면(예: Blender 배포본) 크기로 잡아낸다
+          for z in dist/*.zip; do size=$(stat -c %s "$z"); test "$size" -lt 52428800 || { echo "$z 가 50MB 를 넘습니다 ($size)"; exit 1; }; done
       - name: GitHub Release 생성
         env:
           GH_TOKEN: ${{ github.token }}
