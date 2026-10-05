@@ -1,5 +1,7 @@
 import bpy
 
+from .. import preferences
+
 
 def _wrap(text, width):
     lines = []
@@ -22,6 +24,7 @@ class AIRIG_PT_main(bpy.types.Panel):
     def draw(self, context):
         layout = self.layout
         state = context.scene.airig
+        layout.label(text=preferences.active_backend_label(context), icon="CONSOLE")
         layout.prop(state, "body_type")
         layout.operator("airig.ai_auto_rig", icon="LIGHT_SUN")
         layout.operator("airig.auto_rig", icon="ARMATURE_DATA")

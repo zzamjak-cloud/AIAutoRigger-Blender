@@ -45,11 +45,17 @@ class AIRIG_AP_preferences(bpy.types.AddonPreferences):
         layout = self.layout
         layout.prop(self, "backend")
         box = layout.box()
-        for label, name, override in (("Claude Code CLI", "claude", self.claude_path), ("Codex CLI", "codex", self.codex_path)):
-            found = backends.find_executable(name, override)
-            box.label(text=f"{label}: {found or '찾지 못함'}", icon="CHECKMARK" if found else "X")
-        box.prop(self, "claude_path")
-        box.prop(self, "codex_path")
+        row = box.row()
+        row.label(text="로컬 AI CLI", icon="CONSOLE")
+        row.operator("airig.detect_cli", icon="FILE_REFRESH")
+        for label, name, prop in (("Claude Code CLI", "claude", "claude_path"), ("Codex CLI", "codex", "codex_path")):
+            found = backends.find_executable(name, getattr(self, prop))
+            col = box.column(align=True)
+            col.prop(self, prop, text=label)
+            if not found:
+                col.label(text="찾지 못함 — 경로를 지정하거나 CLI 를 설치하세요", icon="ERROR")
+            elif found != getattr(self, prop):
+                col.label(text=f"사용 중: {found}", icon="CHECKMARK")
         box.prop(self, "cli_model")
         box.prop(self, "timeout")
         box = layout.box()
@@ -62,6 +68,58 @@ class AIRIG_AP_preferences(bpy.types.AddonPreferences):
         row.prop(self, "review_effort")
         layout.prop(self, "review_max_turns")
         layout.label(text="렌더 이미지(메시 형상)가 선택한 AI 서비스로 전송됩니다.", icon="INFO")
+
+
+def fill_cli_paths(prefs, overwrite=False):
+    """비어 있거나 무효한 CLI 경로를 자동 탐지 결과로 채운다. 채운 개수 반환."""
+    backends.clear_cache()
+    filled = 0
+    for name, prop in (("claude", "claude_path"), ("codex", "codex_path")):
+        current = getattr(prefs, prop)
+        valid = bool(current) and os.path.isfile(os.path.expanduser(current))
+        if overwrite or not valid:
+            found = backends.find_executable(name, "")
+            if found and found != current:
+                setattr(prefs, prop, found)
+                filled += 1
+    return filled
+
+
+class AIRIG_OT_detect_cli(bpy.types.Operator):
+    """Claude Code CLI·Codex CLI 를 다시 찾아 경로 칸을 채운다"""
+
+    bl_idname = "airig.detect_cli"
+    bl_label = "CLI 다시 찾기"
+    bl_options = {"REGISTER", "INTERNAL"}
+
+    def execute(self, context):
+        prefs = get_prefs(context)
+        if prefs is None:
+            return {"CANCELLED"}
+        fill_cli_paths(prefs, overwrite=True)
+        found = [n for n, p in (("claude", prefs.claude_path), ("codex", prefs.codex_path)) if p]
+        self.report({"INFO"}, f"찾은 CLI: {', '.join(found) or '없음'}")
+        return {"FINISHED"}
+
+
+def autofill_on_register():
+    """애드온 활성화 시 빈 경로 칸을 채워 Preferences 에 실제 경로가 보이게 한다."""
+    try:
+        prefs = get_prefs(bpy.context)
+        if prefs is not None:
+            fill_cli_paths(prefs)
+    except (AttributeError, RuntimeError):
+        # 시작 직후처럼 Preferences 접근이 제한된 경우에는 다음 실행 때 채운다
+        pass
+
+
+def active_backend_label(context) -> str:
+    """사이드바 표시용: 현재 설정으로 쓰게 될 백엔드와 실행 파일."""
+    try:
+        kind, exe = backends.resolve(backend_settings(context))
+    except backends.BackendError:
+        return "AI 사용 불가 — Preferences 에서 CLI 경로 확인"
+    return f"AI: {backends.LABELS[kind]}" + (f" ({exe})" if exe else "")
 
 
 def get_prefs(context):
@@ -80,4 +138,4 @@ def backend_settings(context, review=False) -> backends.BackendSettings:
     )
 
 
-classes = (AIRIG_AP_preferences,)
+classes = (AIRIG_AP_preferences, AIRIG_OT_detect_cli)

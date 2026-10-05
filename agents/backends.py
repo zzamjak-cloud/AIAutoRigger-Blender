@@ -42,12 +42,18 @@ def find_executable(name: str, override: str = "") -> str | None:
     return _find_cached(name, override, os.environ.get("PATH", ""))
 
 
+def clear_cache():
+    _find_cached.cache_clear()
+
+
 @lru_cache(maxsize=32)
 def _find_cached(name: str, override: str, _path_key: str) -> str | None:
     # Preferences draw() 가 매 다시 그리기마다 부르므로 PATH 가 바뀌지 않는 한 캐시한다
     if override:
         path = os.path.expanduser(override)
-        return path if os.path.isfile(path) else None
+        if os.path.isfile(path) and os.access(path, os.X_OK):
+            return path
+        # 지정 경로가 사라졌으면(재설치·이동) 자동 탐색으로 되돌아간다
     # Windows 는 배치 셔틀(.cmd)보다 네이티브 실행 파일을 우선한다 (인자 인용 문제 회피)
     names = [name + ".exe", name + ".cmd", name] if sys.platform == "win32" else [name]
     for n in names:
@@ -264,28 +270,42 @@ class ApiBackend:
             raise BackendError(f"API 응답 JSON 해석 실패: {exc}") from exc
 
 
-def create(settings: BackendSettings):
-    """설정에 맞는 백엔드. AUTO 는 Claude Code CLI → Codex CLI → API(키가 있을 때) 순으로 고른다."""
+LABELS = {CLAUDE_CODE: ClaudeCodeBackend.label, CODEX: CodexBackend.label, API: "Anthropic API"}
+
+
+def resolve(settings: BackendSettings) -> tuple[str, str | None]:
+    """(실제 백엔드 종류, 실행 파일). 클라이언트를 만들지 않으므로 UI 에서 자주 불러도 가볍다."""
     kind = settings.kind
     claude = find_executable("claude", settings.claude_path)
     codex = find_executable("codex", settings.codex_path)
     if kind == "AUTO":
         if claude:
-            kind = CLAUDE_CODE
-        elif codex:
-            kind = CODEX
-        elif settings.api_key or os.environ.get("ANTHROPIC_API_KEY"):
-            kind = API
-        else:
-            raise BackendError("Claude Code CLI·Codex CLI 를 찾지 못했고 API 키도 없습니다. Preferences 에서 설정하세요.")
+            return CLAUDE_CODE, claude
+        if codex:
+            return CODEX, codex
+        if settings.api_key or os.environ.get("ANTHROPIC_API_KEY"):
+            return API, None
+        raise BackendError("Claude Code CLI·Codex CLI 를 찾지 못했고 API 키도 없습니다. Preferences 에서 설정하세요.")
     if kind == CLAUDE_CODE:
         if not claude:
             raise BackendError("Claude Code CLI(claude) 를 찾지 못했습니다. Preferences 에 경로를 지정하세요.")
-        return ClaudeCodeBackend(claude, settings)
+        return kind, claude
     if kind == CODEX:
         if not codex:
             raise BackendError("Codex CLI(codex) 를 찾지 못했습니다. Preferences 에 경로를 지정하세요.")
-        return CodexBackend(codex, settings)
+        return kind, codex
+    if kind == API:
+        return kind, None
+    raise BackendError(f"알 수 없는 백엔드: {kind}")
+
+
+def create(settings: BackendSettings):
+    """설정에 맞는 백엔드. AUTO 는 Claude Code CLI → Codex CLI → API(키가 있을 때) 순으로 고른다."""
+    kind, exe = resolve(settings)
+    if kind == CLAUDE_CODE:
+        return ClaudeCodeBackend(exe, settings)
+    if kind == CODEX:
+        return CodexBackend(exe, settings)
     if kind == API:
         try:
             return ApiBackend(settings)

@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.2.1]
+
+- 애드온 활성화 시 Claude Code CLI·Codex CLI 경로를 자동으로 찾아 Preferences 경로 칸에 채움 (Finder·Dock 으로 실행한 Blender 포함)
+- Preferences 에 **CLI 다시 찾기** 버튼, 지정 경로가 사라지면 자동 탐색으로 복귀
+- 사이드바에 현재 사용할 AI 백엔드와 실행 파일 표시
+
 ## [0.2.0]
 
 - AI 백엔드 선택: 로컬에 로그인된 **Claude Code CLI**·**Codex CLI** 를 API 키 없이 사용 (기본 Auto: Claude Code → Codex → API 순), Anthropic API 는 선택지로 유지

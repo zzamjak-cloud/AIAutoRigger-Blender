@@ -33,8 +33,16 @@ class FakeCliCase(unittest.TestCase):
         os.environ["AIRIG_FAKE_RESPONSES"] = str(self.responses)
         os.environ["AIRIG_FAKE_LOG"] = str(self.log)
         os.environ.pop("AIRIG_FAKE_SLEEP", None)
+        # 실제 설치된 claude/codex 를 찾지 않도록 탐색 경로를 격리한다 (가짜 CLI 의 python3 는 /usr/bin)
+        self._env_path, self._extra = os.environ.get("PATH", ""), backends._EXTRA_DIRS
+        os.environ["PATH"] = "/usr/bin:/bin"
+        backends._EXTRA_DIRS = []
+        backends.clear_cache()
 
     def tearDown(self):
+        os.environ["PATH"] = self._env_path
+        backends._EXTRA_DIRS = self._extra
+        backends.clear_cache()
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     def respond(self, *items):
@@ -77,6 +85,16 @@ class BackendTest(FakeCliCase):
         s = self.settings("AUTO")
         s.claude_path = str(self.tmp / "missing")
         self.assertIsInstance(backends.create(s), backends.CodexBackend)
+
+    def test_stale_override_falls_back_to_search(self):
+        s = self.settings(backends.CODEX)
+        s.codex_path = str(self.tmp / "moved" / "codex")
+        backends._EXTRA_DIRS = [str(self.bin)]
+        backends.clear_cache()
+        self.assertEqual(backends.resolve(s), (backends.CODEX, str(self.bin / "codex")))
+
+    def test_resolve_without_creating_client(self):
+        self.assertEqual(backends.resolve(self.settings("AUTO"))[0], backends.CLAUDE_CODE)
 
     def test_missing_executable(self):
         s = self.settings(backends.CODEX)

@@ -42,6 +42,21 @@ check(
     f"로드된 버전 {loaded_version} == 매니페스트 {manifest_version}",
 )
 
+# 로컬 CLI 자동 탐지: 설치돼 있으면 활성화 시 경로 칸이 채워져 있어야 한다 (CI 처럼 없으면 생략)
+backends = __import__(f"{MODULE}.agents.backends", fromlist=["x"])
+prefs_mod = __import__(f"{MODULE}.preferences", fromlist=["x"])
+prefs = bpy.context.preferences.addons[MODULE].preferences
+for name, prop in (("claude", "claude_path"), ("codex", "codex_path")):
+    found = backends.find_executable(name)
+    if found:
+        check(getattr(prefs, prop) == found, f"{name} 경로 자동 채움: {getattr(prefs, prop)}")
+setattr(prefs, "codex_path", "")
+check(bpy.ops.airig.detect_cli() == {"FINISHED"}, "CLI 다시 찾기 연산자")
+if backends.find_executable("codex"):
+    check(prefs.codex_path == backends.find_executable("codex"), "다시 찾기로 codex 경로 복원")
+label = prefs_mod.active_backend_label(bpy.context)
+check(isinstance(label, str) and label, f"사이드바 AI 표시: {label}")
+
 # 핵심 기능: 좌우 대칭 메시 분석
 bpy.ops.wm.read_homefile(use_empty=True)
 bpy.ops.mesh.primitive_cube_add(size=1.0, location=(0.0, 0.0, 0.9))

@@ -9,6 +9,7 @@ def register():
     for cls in _classes:
         bpy.utils.register_class(cls)
     properties.register_props()
+    preferences.autofill_on_register()
 
 
 def unregister():
