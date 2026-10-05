@@ -1,4 +1,4 @@
-"""이동 루프(걷기·달리기·대기) 통합 테스트: 베지어 키, 루프 이음새, 발 고정, FBX 굽기, AI Motion(가짜 Codex CLI).
+"""애니메이션 통합 테스트: 루프(걷기·달리기·대기·기쁨) 이음새·발 고정, 단발(점프·공격·피격·사망) 구조, FBX 굽기, AI Motion(가짜 Codex CLI).
 
 실행: scripts/dev_run.sh --background --python tests/blender_motion_test.py -- <출력 폴더>
 """
@@ -18,6 +18,7 @@ import humanoid  # noqa: E402
 PKG = f"bl_ext.user_default.{os.environ['AIRIG_ADDON_ID']}"
 OUT = pathlib.Path(sys.argv[sys.argv.index("--") + 1]) if "--" in sys.argv else ROOT / "dist" / "motion_test"
 animate = __import__(f"{PKG}.bridge.animate", fromlist=["x"])
+locomotion = __import__(f"{PKG}.core.locomotion", fromlist=["x"])
 
 
 def check(cond, msg):
@@ -73,34 +74,87 @@ def mesh_min_z(frame):
 
 # 발 접지 판정은 발 IK 컨트롤 기준 (발 굴림 중에는 발목·발끝이 축을 바꿔 가며 들리므로 DEF 본은 기준이 아니다)
 rest_foot_z = (rig.matrix_world @ rig.data.bones["foot_ik.L"].head_local).z
-for motion in ("WALK", "RUN", "IDLE"):
+rest_spine_z = world("DEF-spine", 1).z
+
+
+def airborne(n):
+    """두 발이 모두 들린 프레임 목록."""
+    return [f for f in range(1, n + 1)
+            if world("foot_ik.L", f).z > rest_foot_z + 0.005 and world("foot_ik.R", f).z > rest_foot_z + 0.005]
+
+
+for motion in locomotion.MOTIONS:
     for style in ("NORMAL", "ZOMBIE"):
         st.anim_motion, st.anim_style, st.anim_root_motion = motion, style, False
         check(bpy.ops.airig.generate_motion() == {"FINISHED"}, f"{motion}/{style}: 생성")
         action = bpy.data.actions[st.anim_action]
         n = int(action.frame_end - action.frame_start)
+        loop = locomotion.is_loop(motion)
         curves = animate.fcurves(rig)
         points = [kp for fc in curves for kp in fc.keyframe_points]
-        check(all(any(m.type == "CYCLES" for m in fc.modifiers) for fc in curves), f"{motion}/{style}: 모든 커브에 Cycles")
         per_curve = max(len(fc.keyframe_points) for fc in curves)
         check(per_curve <= 9, f"{motion}/{style}: 커브당 키 {per_curve}개 (매 프레임 {n}개 대비)")
         check(all(kp.handle_left_type == "AUTO_CLAMPED" for kp in points), f"{motion}/{style}: Auto-Clamped 베지어 핸들")
-        if motion != "IDLE":
-            check(any(kp.interpolation == "LINEAR" for kp in points), f"{motion}/{style}: 발 딛는 구간 선형")
-        a, b = pose_at(1), pose_at(1 + n)
-        check(max_diff(a, b) < 1e-4, f"{motion}/{style}: 루프 이음새 (1 == {1 + n}) {max_diff(a, b):.6f}")
-        c, d = pose_at(5), pose_at(5 + 2 * n)
-        check(max_diff(c, d) < 1e-4, f"{motion}/{style}: 두 주기 뒤에도 반복")
-        lowest = min(mesh_min_z(f) for f in range(1, n + 1, max(1, n // 8)))
-        check(lowest > -0.03, f"{motion}/{style}: 메시가 바닥을 뚫지 않음 (최저 {lowest:.3f}m)")
+        lowest = min(mesh_min_z(f) for f in range(1, n + 2, max(1, n // 8)))
+        # 쓰러지는 동안은 IK 무릎이 잠깐 바닥에 스치는 것을 허용한다
+        limit = -0.05 if motion == "DEATH" else -0.03
+        check(lowest > limit, f"{motion}/{style}: 메시가 바닥을 뚫지 않음 (최저 {lowest:.3f}m)")
+        if loop:
+            check(all(any(m.type == "CYCLES" for m in fc.modifiers) for fc in curves), f"{motion}/{style}: 모든 커브에 Cycles")
+            check(action.use_cyclic and scene.frame_end == n, f"{motion}/{style}: 루프 액션·재생 범위 1..{n}")
+            if motion in ("WALK", "RUN"):
+                check(any(kp.interpolation == "LINEAR" for kp in points), f"{motion}/{style}: 발 딛는 구간 선형")
+            a, b = pose_at(1), pose_at(1 + n)
+            check(max_diff(a, b) < 1e-4, f"{motion}/{style}: 루프 이음새 (1 == {1 + n}) {max_diff(a, b):.6f}")
+            c, d = pose_at(5), pose_at(5 + 2 * n)
+            check(max_diff(c, d) < 1e-4, f"{motion}/{style}: 두 주기 뒤에도 반복")
+        else:
+            check(not any(fc.modifiers for fc in curves), f"{motion}/{style}: 단발 동작은 Cycles 없음")
+            check(not action.use_cyclic and scene.frame_end == n + 1, f"{motion}/{style}: 단발 액션·재생 범위 1..{n + 1}")
+            a, b = pose_at(1 + n), pose_at(1 + 2 * n)
+            check(max_diff(a, b) < 1e-4, f"{motion}/{style}: 끝 자세 유지 ({1 + n} == {1 + 2 * n})")
         if motion == "IDLE":
             moved = max((world("DEF-toe.L", f) - world("DEF-toe.L", 1)).length for f in range(1, n, 6))
             check(moved < 1e-4, f"IDLE/{style}: 발 고정")
         if motion == "RUN" and style == "NORMAL":
-            # 체공: 두 발이 모두 들린 프레임이 있다
-            air = [f for f in range(1, n + 1)
-                   if world("foot_ik.L", f).z > rest_foot_z + 0.005 and world("foot_ik.R", f).z > rest_foot_z + 0.005]
+            air = airborne(n)
             check(0 < len(air) < n // 2, f"RUN: 체공 프레임 {len(air)}/{n}개")
+        if motion == "HAPPY" and style == "NORMAL":
+            air = airborne(n)
+            check(0 < len(air) < n // 2, f"HAPPY: 깡충 체공 프레임 {len(air)}/{n}개")
+            hand = min(world("hand_ik.L", f).z for f in range(1, n + 1))
+            check(hand > rest_spine_z + 0.2, f"HAPPY: 손이 계속 들려 있음 (최저 {hand:.2f}m)")
+        if motion == "JUMP":
+            air = airborne(n)
+            check(0 < len(air) < n // 2, f"JUMP/{style}: 체공 프레임 {len(air)}/{n}개")
+            apex = max(world("DEF-spine", f).z for f in range(1, n + 2))
+            check(apex > rest_spine_z + 0.05, f"JUMP/{style}: 최고점 {100 * (apex - rest_spine_z):.0f}cm 상승")
+            check(abs(world("DEF-spine", 1 + n).z - rest_spine_z) < 1e-3, f"JUMP/{style}: 착지 후 레스트 높이 복귀")
+        if motion == "ATTACK":
+            side = json.loads(action["airig_motion"])["attack_side"]
+            h0 = world(f"hand_ik.{side}", 1)
+            reach = max((world(f"hand_ik.{side}", f) - h0).length for f in range(1, n + 2))
+            check(reach > 0.25, f"ATTACK/{style}: {side} 손 이동 {100 * reach:.0f}cm")
+            check((world(f"hand_ik.{side}", 1 + n) - h0).length < 1e-3, f"ATTACK/{style}: 손이 제자리로 복귀")
+        if motion == "HIT":
+            pushed = max((world("DEF-spine", f) - world("DEF-spine", 1)).length for f in range(1, n + 2))
+            check(pushed > 0.03, f"HIT/{style}: 몸통 밀림 {100 * pushed:.0f}cm")
+        if motion == "DEATH":
+            end = world("DEF-spine", 1 + n).z
+            check(end < 0.45 * rest_spine_z, f"DEATH/{style}: 골반이 바닥 근처 ({100 * end:.0f}cm, 서 있을 때 {100 * rest_spine_z:.0f}cm)")
+            head_end = world("head", 1 + n).z
+            check(head_end < 0.6 * rest_spine_z, f"DEATH/{style}: 머리도 누움 ({100 * head_end:.0f}cm)")
+
+# 전진 점프: 도약 전에는 제자리, 착지 후 한 번만 전진하고 멈춘다
+st.anim_motion, st.anim_style, st.anim_root_motion = "JUMP", "NORMAL", True
+check(bpy.ops.airig.generate_motion() == {"FINISHED"}, "전진 점프 생성")
+jp = json.loads(bpy.data.actions[st.anim_action]["airig_motion"])
+jn = jp["cycle_frames"]
+# 몸통은 웅크리며 앞으로 숙여지므로 전진 여부는 루트 본으로 본다
+check((world("root", 1 + round(0.2 * jn)) - world("root", 1)).length < 1e-3, "전진 점프: 웅크릴 때는 제자리")
+jadv = (world("root", 1 + jn) - world("root", 1)).length
+check(jadv > 0.3, f"전진 점프: 착지 후 {jadv:.2f}m 전진")
+check(abs((world("root", 1 + 2 * jn) - world("root", 1)).length - jadv) < 1e-3, "전진 점프: 끝난 뒤 더 가지 않음")
 
 # 전진 걷기: 딛는 동안 발이 월드에서 미끄러지지 않는다
 st.anim_motion, st.anim_style, st.anim_root_motion = "WALK", "NORMAL", True
@@ -159,8 +213,7 @@ os.environ["AIRIG_FAKE_RESPONSES"] = str(tmp / "responses.json")
 os.environ["AIRIG_FAKE_LOG"] = str(tmp / "log.jsonl")
 prefs = bpy.context.preferences.addons[PKG].preferences
 prefs.backend = "CODEX"
-prefs.codex_path = str(ROOT / "tests" / "fixtures" / "fake_ai_cli.py")
-locomotion = __import__(f"{PKG}.core.locomotion", fromlist=["x"])
+prefs.codex_path = str(ROOT / "tests" / "fixtures" / ("fake_ai_cli.cmd" if sys.platform == "win32" else "fake_ai_cli.py"))
 first = locomotion.preset("WALK", "ZOMBIE").to_dict()
 first["cycle_frames"] = 40
 second = dict(first, arm_forward=0.8)

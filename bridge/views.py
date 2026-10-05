@@ -55,6 +55,7 @@ def render_views(context, obj, facing, extra_objects=(), which=None, frame=None,
     cams = []
     images = {}
     tmpdir = tempfile.mkdtemp(prefix="airig_")
+    main_frame = None
     try:
         scene.world = world
         world.color = (1.0, 1.0, 1.0)
@@ -63,6 +64,10 @@ def render_views(context, obj, facing, extra_objects=(), which=None, frame=None,
             scene.collection.objects.link(extra)
         if frame is not None:
             scene.render.fps = context.scene.render.fps
+            # 임시 씬만 프레임을 바꾸면 메인 씬 뎁스그래프가 마지막으로 평가한 포즈가 그대로 렌더되는 경우가 있어
+            # (리그 포즈는 원본 오브젝트에 되써진다) 메인 씬도 같은 프레임으로 맞춘 뒤 렌더하고 끝나면 되돌린다
+            main_frame = context.scene.frame_current
+            context.scene.frame_set(int(frame))
             scene.frame_set(int(frame))
         try:
             scene.render.engine = "BLENDER_WORKBENCH"
@@ -103,6 +108,8 @@ def render_views(context, obj, facing, extra_objects=(), which=None, frame=None,
             bpy.data.cameras.remove(data)
         bpy.data.scenes.remove(scene)
         bpy.data.worlds.remove(world)
+        if main_frame is not None:
+            context.scene.frame_set(main_frame)
         try:
             os.rmdir(tmpdir)
         except OSError:

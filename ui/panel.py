@@ -52,7 +52,7 @@ class AIRIG_PT_main(bpy.types.Panel):
             layout.operator("airig.export_fbx", icon="EXPORT")
         if state.rig_name and state.detected_type == "BIPED":
             box = layout.box()
-            box.label(text="애니메이션 루프", icon="ACTION")
+            box.label(text="애니메이션", icon="ACTION")
             row = box.row()
             row.prop(state, "anim_motion", text="")
             row.prop(state, "anim_style", text="")

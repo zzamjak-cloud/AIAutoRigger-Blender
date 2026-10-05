@@ -1,4 +1,4 @@
-"""이동 루프 생성: 프리셋(AI 없음)과 AI Motion(프롬프트 → 파라미터 → 프레임 렌더 검토 라운드)."""
+"""애니메이션 생성(루프·단발): 프리셋(AI 없음)과 AI Motion(프롬프트 → 파라미터 → 프레임 렌더 검토 라운드)."""
 
 import threading
 
@@ -21,7 +21,7 @@ def _targets(context):
     if rig is None or mesh is None or metarig is None:
         raise RuntimeError("먼저 리그를 생성하세요.")
     if metarig.get("airig_kind") != "BIPED":
-        raise RuntimeError("이동 루프는 현재 2족 리그만 지원합니다.")
+        raise RuntimeError("애니메이션 생성은 현재 2족 리그만 지원합니다.")
     return rig, mesh, metarig.get("airig_facing", "-Y")
 
 
@@ -43,10 +43,10 @@ def _poll(context):
 
 
 class AIRIG_OT_generate_motion(bpy.types.Operator):
-    """선택한 동작·스타일 프리셋으로 루프 애니메이션을 만든다 (AI 없음)"""
+    """선택한 동작·스타일 프리셋으로 애니메이션을 만든다 (AI 없음). 걷기·달리기·대기·기쁨은 루프, 점프·공격·피격·사망은 단발"""
 
     bl_idname = "airig.generate_motion"
-    bl_label = "Generate Loop"
+    bl_label = "Generate Motion"
     bl_options = {"REGISTER", "UNDO"}
 
     @classmethod
@@ -63,22 +63,23 @@ class AIRIG_OT_generate_motion(bpy.types.Operator):
             self.report({"ERROR"}, str(exc))
             return {"CANCELLED"}
         state.anim_summary = ""
-        self.report({"INFO"}, f"루프 생성: {action.name} ({params.cycle_frames}프레임, 키 포즈 {state.anim_keys}개)")
+        kind = "루프" if locomotion.is_loop(params.motion) else "단발 동작"
+        self.report({"INFO"}, f"{kind} 생성: {action.name} ({params.cycle_frames}프레임, 키 포즈 {state.anim_keys}개)")
         return {"FINISHED"}
 
 
-def render_review(context, rig, mesh, facing, n):
-    """검토용 프레임: 측면 4장 + 정면 2장. 전진 이동은 잠시 끄고 제자리로 렌더한다."""
+def render_review(context, rig, mesh, facing, n, loop=True):
+    """검토용 프레임: 측면 4장(단발은 끝 자세까지 5장) + 정면 2장. 전진 이동은 잠시 끄고 제자리로 렌더한다."""
     root = [fc for fc in animate.fcurves(rig) if fc.data_path == 'pose.bones["root"].location']
     for fc in root:
         fc.mute = True
     images = []
     try:
-        for t in REVIEW_TIMES:
+        for t in REVIEW_TIMES + (() if loop else (1.0,)):
             frame = animate.START_FRAME + round(t * n)
             imgs, _, _ = views.render_views(context, mesh, facing, extra_objects=[rig], which=("side",), frame=frame, margin=1.15)
             images.append((f"side_t{int(t * 100):03d}", imgs["side"]))
-        for t in (0.0, 0.5):
+        for t in ((0.0, 0.5) if loop else (0.5, 1.0)):
             frame = animate.START_FRAME + round(t * n)
             imgs, _, _ = views.render_views(context, mesh, facing, extra_objects=[rig], which=("front",), frame=frame, margin=1.15)
             images.append((f"front_t{int(t * 100):03d}", imgs["front"]))
@@ -90,7 +91,7 @@ def render_review(context, rig, mesh, facing, n):
 
 
 class AIRIG_OT_ai_motion(bpy.types.Operator):
-    """프롬프트대로 AI 가 걸음 파라미터를 정하고, 렌더한 프레임을 보며 보정해 루프를 만든다 (ESC 취소)"""
+    """프롬프트대로 AI 가 동작 파라미터를 정하고, 렌더한 프레임을 보며 보정해 애니메이션을 만든다 (ESC 취소)"""
 
     bl_idname = "airig.ai_motion"
     bl_label = "AI Motion"
@@ -176,7 +177,7 @@ class AIRIG_OT_ai_motion(bpy.types.Operator):
         if (self.rounds_left <= 0) or (done and not changed):
             return self._finish(context)
         self.rounds_left -= 1
-        images = render_review(context, self.rig, self.mesh, self.facing, params.cycle_frames)
+        images = render_review(context, self.rig, self.mesh, self.facing, params.cycle_frames, locomotion.is_loop(params.motion))
         backend, prompt, measured = self.backend, self.prompt, context.scene.airig.anim_facts
         self._start(lambda: motion_agent.ask_review(backend, prompt, params, images, measured))
         return "CONTINUE"
@@ -184,7 +185,7 @@ class AIRIG_OT_ai_motion(bpy.types.Operator):
     def _finish(self, context):
         state = context.scene.airig
         state.anim_summary = self.summary[:500]
-        self.report({"INFO"}, f"AI 루프 완료: {state.anim_action} ({self.params.cycle_frames}프레임, 키 포즈 {state.anim_keys}개)")
+        self.report({"INFO"}, f"AI Motion 완료: {state.anim_action} ({self.params.cycle_frames}프레임, 키 포즈 {state.anim_keys}개)")
         return {"FINISHED"}
 
     def modal(self, context, event):

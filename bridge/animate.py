@@ -1,4 +1,4 @@
-"""이동 루프 키 포즈를 Rigify 컨트롤에 베지어 키로 넣는다.
+"""애니메이션 키 포즈(루프·단발)를 Rigify 컨트롤에 베지어 키로 넣는다.
 
 발·손·몸통 IK 컨트롤과 루트는 모두 Root 를 부모로 따르므로(Rigify 기본), 캐릭터 기준 오프셋을
 본 레스트 축으로 바꾸기만 하면 키 값을 바로 계산할 수 있다(프레임별 평가 불필요).
@@ -140,24 +140,27 @@ def apply_motion(context, rig, motion, name, facing="-Y"):
 
     rig.animation_data.use_nla = use_nla
     root_path = 'pose.bones["root"].location'
+    loop = motion.loop
     for fc in fcurves(rig):
         for kp in fc.keyframe_points:
             kp.interpolation = interp.get((fc.data_path, round(kp.co.x, 3)), locomotion.BEZIER)
             kp.handle_left_type = kp.handle_right_type = "AUTO_CLAMPED"
-        mod = fc.modifiers.new("CYCLES")
-        if fc.data_path == root_path:
-            # 전진은 주기마다 이동 거리를 이어 붙인다
-            mod.mode_before = mod.mode_after = "REPEAT_OFFSET"
+        if loop:
+            # 단발 동작(점프·공격·피격·사망)은 반복하지 않고 마지막 키 값을 유지한다
+            mod = fc.modifiers.new("CYCLES")
+            if fc.data_path == root_path:
+                # 전진은 주기마다 이동 거리를 이어 붙인다
+                mod.mode_before = mod.mode_after = "REPEAT_OFFSET"
         fc.update()
 
     action.use_frame_range = True
     action.frame_start = START_FRAME
     action.frame_end = START_FRAME + n
-    action.use_cyclic = True
+    action.use_cyclic = loop
     action["airig_motion"] = json.dumps(p.to_dict())
     scene = context.scene
-    # 재생은 마지막 프레임(=첫 프레임 복제)을 빼야 이음새에서 한 프레임 멈추지 않는다
-    scene.frame_start, scene.frame_end = START_FRAME, START_FRAME + n - 1
+    # 루프 재생은 마지막 프레임(=첫 프레임 복제)을 빼야 이음새에서 한 프레임 멈추지 않는다. 단발은 끝 프레임까지 재생
+    scene.frame_start, scene.frame_end = START_FRAME, START_FRAME + (n - 1 if loop else n)
     scene.frame_set(START_FRAME)
     if old is not None and old.users == 0 and not old.use_fake_user:
         bpy.data.actions.remove(old)

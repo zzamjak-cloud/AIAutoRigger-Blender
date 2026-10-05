@@ -31,7 +31,7 @@ TMP = pathlib.Path(tempfile.mkdtemp(prefix="airig_review_test_"))
 os.environ["AIRIG_FAKE_RESPONSES"] = str(TMP / "responses.json")
 os.environ["AIRIG_FAKE_LOG"] = str(TMP / "log.jsonl")
 PREFS.backend = "CODEX"
-PREFS.codex_path = str(ROOT / "tests" / "fixtures" / "fake_ai_cli.py")
+PREFS.codex_path = str(ROOT / "tests" / "fixtures" / ("fake_ai_cli.cmd" if sys.platform == "win32" else "fake_ai_cli.py"))
 PREFS.review_max_turns = 4
 
 

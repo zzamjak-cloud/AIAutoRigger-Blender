@@ -45,16 +45,19 @@ class AIRIG_PG_state(bpy.types.PropertyGroup):
     review_summary: bpy.props.StringProperty(name="Review Summary")
     anim_motion: bpy.props.EnumProperty(
         name="Motion",
-        items=(("WALK", "Walk", "걷기 루프"), ("RUN", "Run", "달리기 루프"), ("IDLE", "Idle", "대기 루프")),
+        items=(("WALK", "Walk", "걷기 루프"), ("RUN", "Run", "달리기 루프"), ("IDLE", "Idle", "대기 루프"),
+               ("HAPPY", "Happy", "기쁨 루프 (팔을 들고 깡충 뛰기)"), ("JUMP", "Jump", "점프 (단발)"),
+               ("ATTACK", "Attack", "한 손 휘두르기 공격 (단발)"), ("HIT", "Hit", "피격 반응 (단발)"),
+               ("DEATH", "Death", "쓰러져 눕는 사망 (단발, 끝 자세 유지)")),
         default="WALK",
     )
     anim_style: bpy.props.EnumProperty(
         name="Style", items=(("NORMAL", "Normal", ""), ("ZOMBIE", "Zombie", "")), default="NORMAL",
     )
     anim_root_motion: bpy.props.BoolProperty(
-        name="Root Motion", description="꺼두면 제자리 루프(게임 엔진 권장), 켜면 앞으로 이동한다", default=False,
+        name="Root Motion", description="꺼두면 제자리(게임 엔진 권장), 켜면 앞으로 이동한다 (걷기·달리기·점프만)", default=False,
     )
-    anim_prompt: bpy.props.StringProperty(name="Prompt", description="예: 좀비가 다리를 절며 걷는 루프")
+    anim_prompt: bpy.props.StringProperty(name="Prompt", description="예: 좀비가 다리를 절며 걷는 루프 / 크게 휘두르는 공격 / 뒤로 쓰러지는 사망")
     anim_review_rounds: bpy.props.IntProperty(
         name="Review Rounds", description="렌더한 프레임을 AI 가 보고 보정하는 횟수", default=1, min=0, max=3,
     )

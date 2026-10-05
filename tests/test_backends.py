@@ -26,8 +26,13 @@ class FakeCliCase(unittest.TestCase):
         self.bin = self.tmp / "bin"
         self.bin.mkdir()
         for name in ("claude", "codex"):
-            shutil.copy(FAKE, self.bin / name)
-            os.chmod(self.bin / name, 0o755)
+            if sys.platform == "win32":
+                # Windows 는 셔뱅 스크립트를 직접 실행하지 못하므로 .cmd 래퍼로 감싼다 (PATH 를 비워도 돌도록 절대 경로)
+                wrapper = '@echo off' + '\r\n' + f'"{sys.executable}" "{FAKE}" %*' + '\r\n'
+                (self.bin / f"{name}.cmd").write_text(wrapper, newline="")
+            else:
+                shutil.copy(FAKE, self.bin / name)
+                os.chmod(self.bin / name, 0o755)
         self.responses = self.tmp / "responses.json"
         self.log = self.tmp / "log.jsonl"
         os.environ["AIRIG_FAKE_RESPONSES"] = str(self.responses)
@@ -51,8 +56,11 @@ class FakeCliCase(unittest.TestCase):
     def calls(self):
         return [json.loads(line) for line in self.log.read_text().splitlines()]
 
+    def exe(self, name):
+        return str(self.bin / (f"{name}.cmd" if sys.platform == "win32" else name))
+
     def settings(self, kind, **kw):
-        return backends.BackendSettings(kind=kind, claude_path=str(self.bin / "claude"), codex_path=str(self.bin / "codex"), **kw)
+        return backends.BackendSettings(kind=kind, claude_path=self.exe("claude"), codex_path=self.exe("codex"), **kw)
 
 
 class BackendTest(FakeCliCase):
@@ -91,7 +99,7 @@ class BackendTest(FakeCliCase):
         s.codex_path = str(self.tmp / "moved" / "codex")
         backends._EXTRA_DIRS = [str(self.bin)]
         backends.clear_cache()
-        self.assertEqual(backends.resolve(s), (backends.CODEX, str(self.bin / "codex")))
+        self.assertEqual(backends.resolve(s), (backends.CODEX, self.exe("codex")))
 
     def test_resolve_without_creating_client(self):
         self.assertEqual(backends.resolve(self.settings("AUTO"))[0], backends.CLAUDE_CODE)

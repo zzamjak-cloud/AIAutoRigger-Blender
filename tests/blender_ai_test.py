@@ -120,7 +120,7 @@ def metarig_error(kind, gt, size):
 
 
 PREFS = bpy.context.preferences.addons[PKG].preferences
-FAKE_CLI = ROOT / "tests" / "fixtures" / "fake_ai_cli.py"
+FAKE_CLI = ROOT / "tests" / "fixtures" / ("fake_ai_cli.cmd" if sys.platform == "win32" else "fake_ai_cli.py")
 TMP = pathlib.Path(tempfile.mkdtemp(prefix="airig_ai_test_"))
 os.environ["AIRIG_FAKE_RESPONSES"] = str(TMP / "responses.json")
 os.environ["AIRIG_FAKE_LOG"] = str(TMP / "log.jsonl")
