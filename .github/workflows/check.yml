@@ -38,6 +38,8 @@ jobs:
         # 렌더가 필요한 AI·검토 테스트(blender_ai_test, blender_review_test)는 GPU 없는 러너에서 생략한다.
         run: |
           export BLENDER_USER_RESOURCES="$RUNNER_TEMP/AIAutoRiggerDev/${BLENDER_SERIES}"
+          # GitHub 러너에는 GPU(EGL)가 없어 Workbench 렌더가 중단되므로 렌더 단계를 건너뛰게 한다
+          export AIRIG_NO_RENDER=1
           export AIRIG_ADDON_ID="$(sed -n 's/^id *= *"\([A-Za-z0-9_]*\)".*/\1/p' blender_manifest.toml)"
           mkdir -p "$BLENDER_USER_RESOURCES/extensions/user_default"
           ln -sfn "$PWD" "$BLENDER_USER_RESOURCES/extensions/user_default/$AIRIG_ADDON_ID"

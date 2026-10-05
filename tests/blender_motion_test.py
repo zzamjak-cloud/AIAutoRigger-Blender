@@ -170,9 +170,17 @@ second = dict(first, arm_forward=0.8)
 ]))
 (tmp / "log.jsonl").write_text("")
 st.anim_prompt = "좀비가 다리를 절며 걷는 루프"
-st.anim_review_rounds = 1
+# GPU 가 없는 CI(AIRIG_NO_RENDER=1)에서는 프레임 렌더가 필요한 검토 라운드를 건너뛴다
+NO_RENDER = os.environ.get("AIRIG_NO_RENDER") == "1"
+st.anim_review_rounds = 0 if NO_RENDER else 1
 check(bpy.ops.airig.ai_motion() == {"FINISHED"}, "AI Motion 실행")
 calls = [json.loads(line) for line in (tmp / "log.jsonl").read_text().splitlines()]
+if NO_RENDER:
+    check(len(calls) == 1 and "좀비가 다리를 절며 걷는 루프" in calls[0]["prompt"], "AI 설계 호출 (렌더 없는 환경)")
+    applied = json.loads(bpy.data.actions[st.anim_action]["airig_motion"])
+    check(applied["cycle_frames"] == 40, "AI 파라미터 반영")
+    print("[motion] ALL PASSED (검토 렌더 생략)")
+    raise SystemExit(0)
 check(len(calls) == 2, f"AI 호출 2회 (설계 + 검토) {len(calls)}")
 check("좀비가 다리를 절며 걷는 루프" in calls[0]["prompt"] and calls[0]["images"] == [], "1회차: 프롬프트만 전달")
 check("Measured from the generated loop" in calls[1]["prompt"] and "cm" in calls[1]["prompt"], "2회차: 실측값 전달")
