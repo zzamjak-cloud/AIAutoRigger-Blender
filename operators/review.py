@@ -1,4 +1,4 @@
-"""AI 리그 검토 (모달: API 호출은 스레드, 도구 실행·렌더는 메인 스레드) 와 보정안 승인 적용."""
+"""AI 리그 검토 (모달: AI 라운드 호출은 스레드, 렌더는 메인 스레드) 와 보정안 승인 적용."""
 
 import json
 import threading
@@ -6,7 +6,7 @@ import threading
 import bpy
 
 from .. import preferences
-from ..agents import claude_client
+from ..agents import backends
 from ..agents.review_agent import Proposal, ReviewSession
 from ..bridge import review
 
@@ -28,7 +28,7 @@ def _session_inputs(context):
 
 
 class AIRIG_OT_ai_review(bpy.types.Operator):
-    """Claude 가 테스트 포즈 렌더를 보고 리그 결함과 보정안을 제안한다 (적용은 승인 후)"""
+    """AI(Claude Code CLI·Codex CLI·API)가 테스트 포즈 렌더를 보고 리그 결함과 보정안을 제안한다 (적용은 승인 후)"""
 
     bl_idname = "airig.ai_review"
     bl_label = "AI Review Rig"
@@ -47,13 +47,13 @@ class AIRIG_OT_ai_review(bpy.types.Operator):
     def execute(self, context):
         try:
             kind, joints, bones = _session_inputs(context)
-            settings = preferences.agent_settings(context, review=True)
-            client = claude_client.make_client(settings)
+            self.backend = backends.create(preferences.backend_settings(context, review=True))
             prefs = preferences.get_prefs(context)
             poses = list(review.POSES[kind])
-            self.session = ReviewSession(client, settings, joints, bones, poses,
-                                         max_turns=prefs.review_max_turns if prefs else 6)
-            images = [(f"Pose '{p}', front view:", review.render_pose(context, p, "front")) for p in poses]
+            self.session = ReviewSession(self.backend, joints, bones, poses,
+                                         max_rounds=prefs.review_max_turns if prefs else 4)
+            # 이미지 이름은 CLI 백엔드에서 파일 이름으로도 쓰인다
+            images = [(f"{p}_front", review.render_pose(context, p, "front")) for p in poses]
             self.session.start(images, review.deformation_metrics(context), kind)
         except (ValueError, RuntimeError) as exc:
             self.report({"ERROR"}, str(exc))
@@ -71,7 +71,7 @@ class AIRIG_OT_ai_review(bpy.types.Operator):
         wm = context.window_manager
         self._timer = wm.event_timer_add(POLL_INTERVAL, window=context.window)
         wm.modal_handler_add(self)
-        context.workspace.status_text_set("AI Review: Claude 가 리그를 검토하는 중… (ESC 취소)")
+        context.workspace.status_text_set(f"AI Review: {self.backend.label} 가 리그를 검토하는 중… (ESC 취소)")
         return {"RUNNING_MODAL"}
 
     def _start_step(self):
@@ -98,7 +98,7 @@ class AIRIG_OT_ai_review(bpy.types.Operator):
         """스레드 한 단계가 끝난 뒤 처리. 'CONTINUE' 또는 연산자 결과 집합."""
         error = self.box["error"]
         if error is not None:
-            msg = str(error) if isinstance(error, claude_client.AgentError) else repr(error)
+            msg = str(error) if isinstance(error, (backends.BackendError, ValueError, RuntimeError)) else repr(error)
             self.report({"ERROR"}, f"AI 검토 실패: {msg}")
             self._store(context)
             return {"CANCELLED"}
@@ -107,10 +107,10 @@ class AIRIG_OT_ai_review(bpy.types.Operator):
             n = len(self.session.proposals)
             self.report({"INFO"}, f"AI 검토 완료: 보정안 {n}개" + (" — 패널에서 확인 후 적용하세요." if n else ""))
             return {"FINISHED"}
-        calls = self.box["calls"]
-        if calls:
-            results = [self.session.handle(c, lambda pose, view: review.render_pose(context, pose, view)) for c in calls]
-            self.session.submit(results)
+        requests = self.box["calls"]
+        if requests:
+            rnd = self.session.rounds
+            self.session.add_renders([(f"r{rnd}_{pose}_{view}", review.render_pose(context, pose, view)) for pose, view in requests])
             self.box["calls"] = []
         self._start_step()
         return "CONTINUE"
@@ -126,6 +126,7 @@ class AIRIG_OT_ai_review(bpy.types.Operator):
 
     def modal(self, context, event):
         if event.type == "ESC":
+            self.backend.cancel()
             self._cleanup(context)
             self._store(context)
             self.report({"WARNING"}, "AI 검토를 취소했습니다. 그때까지의 보정안만 남깁니다.")

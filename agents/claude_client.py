@@ -46,22 +46,15 @@ def image_block(png_bytes: bytes) -> dict:
     }
 
 
-class ToolInputParseError(ValueError):
-    """스트리밍된 도구 입력 JSON 을 SDK 가 해석하지 못함 (재요청 대상)."""
-
-
 def _call(client, params):
-    """스트리밍 호출 후 (최종 메시지, request id). SDK 오류는 AgentError, 도구 입력 JSON 실패는 ToolInputParseError."""
+    """스트리밍 호출 후 (최종 메시지, request id). SDK 오류는 AgentError 로 바꾼다."""
     anthropic = _sdk()
     try:
         with client.beta.messages.stream(**params) as stream:
             message = stream.get_final_message()
             return message, getattr(stream, "request_id", "") or ""
     except ValueError as exc:
-        # pydantic ValidationError 도 ValueError 이므로 응답 검증 실패는 재요청하지 않고 보고한다
-        if type(exc).__name__ == "ValidationError":
-            raise AgentError(f"응답 형식 검증 실패: {exc}") from exc
-        raise ToolInputParseError(str(exc)) from exc
+        raise AgentError(f"응답 해석 실패: {exc}") from exc
     except anthropic.AuthenticationError as exc:
         raise AgentError("API 키 인증에 실패했습니다. Preferences 의 API 키를 확인하세요.") from exc
     except anthropic.PermissionDeniedError as exc:
@@ -104,17 +97,3 @@ def request_json(client, settings: AgentSettings, system: str, content: list, sc
     if text is None:
         raise AgentError("응답에 텍스트가 없습니다.")
     return text, message
-
-
-def request_tools(client, settings: AgentSettings, system: str, messages: list, tools: list, max_tokens: int = 64000):
-    """도구 사용 턴 1회. 도구 입력 JSON 을 SDK 가 해석하지 못하면 None (호출자가 재요청)."""
-    params = _base_params(settings, system, messages, max_tokens)
-    params["output_config"] = {"effort": settings.effort}
-    params["tools"] = tools
-    # 매 턴 이전 대화(이미지 포함)가 접두로 반복되므로 자동 캐싱으로 재전송 비용을 줄인다
-    params["cache_control"] = {"type": "ephemeral"}
-    try:
-        message, _rid = _call(client, params)
-        return message
-    except ToolInputParseError:
-        return None

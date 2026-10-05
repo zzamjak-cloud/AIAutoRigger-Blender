@@ -123,3 +123,10 @@ scripts/                 dev_run.{sh,ps1,bat}, dev_bootstrap.py, build.sh
 - 원격 index 에 같은 플랫폼 다중 버전이 있으면 Blender 가 첫 항목을 설치하므로 Pages 에는 최신 릴리스만 둔다.
 - CI 에서 Blender 를 저장소 안에 풀면 Extension 빌드에 섞인다(v0.1.0 사고). 반드시 RUNNER_TEMP 에 설치한다.
 - Unity 6000.0.69f1 에서 Humanoid 아바타 유효·필수 본 매핑 일치 확인 (`scripts/unity_avatar_check.sh`).
+
+## 9. 로컬 AI 에이전트 백엔드 (0.2.0)
+
+- 사용자 요청으로 API 키 대신 로컬에 설치·로그인된 Claude Code CLI(`claude -p`)·Codex CLI(`codex exec`)를 기본 백엔드로 쓴다. API 는 선택지로 유지.
+- `agents/backends.py` 가 세 백엔드를 "이미지 + 프롬프트 → 스키마 JSON" 한 인터페이스로 감싼다.
+- CLI 는 Blender 내부 도구를 호출할 수 없으므로 Rig Review 는 라운드 방식(렌더 요청 JSON → Blender 렌더 → 누적 맥락으로 재호출)으로 바꿨다. 세션 재개에 의존하지 않아 백엔드 간 동작이 같다.
+- Claude Code `--bare` 는 API 키 인증만 허용하므로 쓰지 않고, `--setting-sources ""`·`--strict-mcp-config`·`--tools Read` 로 사용자 설정 영향을 줄인다.

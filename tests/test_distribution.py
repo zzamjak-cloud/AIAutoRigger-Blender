@@ -18,6 +18,8 @@ class DistributionTest(unittest.TestCase):
         self.assertEqual(set(MANIFEST["platforms"]), {"macos-arm64", "macos-x64", "windows-x64", "linux-x64"})
         self.assertIn("network", MANIFEST["permissions"])
         self.assertIn("files", MANIFEST["permissions"])
+        # Blender 는 권한 설명을 64자 이내로 제한한다
+        self.assertTrue(all(len(v) <= 64 for v in MANIFEST["permissions"].values()))
         excluded = MANIFEST["build"]["paths_exclude_pattern"]
         for p in ("/tests/", "/scripts/", "/docs/", "/.github/", "/dist/"):
             self.assertIn(p, excluded)

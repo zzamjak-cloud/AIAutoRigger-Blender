@@ -1,4 +1,4 @@
-"""AI Review Rig 통합 테스트 (Claude 는 각본대로 응답하는 모의 클라이언트).
+"""AI Review Rig 통합 테스트 (가짜 Codex CLI 가 각본대로 라운드 응답, 네트워크·비용 없음).
 
 실행: scripts/dev_run.sh --background --python tests/blender_review_test.py
 """
@@ -8,7 +8,7 @@ import json
 import os
 import pathlib
 import sys
-import types
+import tempfile
 
 import bpy
 from mathutils import Vector
@@ -18,7 +18,6 @@ sys.path.insert(0, str(ROOT / "tests" / "fixtures"))
 import humanoid  # noqa: E402
 
 PKG = f"bl_ext.user_default.{os.environ['AIRIG_ADDON_ID']}"
-claude_client = importlib.import_module(f"{PKG}.agents.claude_client")
 
 
 def check(cond, msg):
@@ -27,41 +26,13 @@ def check(cond, msg):
     print(f"[review] OK  {msg}")
 
 
-claude_client._sdk = lambda: types.SimpleNamespace(**{n: type(n, (Exception,), {}) for n in (
-    "AuthenticationError", "PermissionDeniedError", "NotFoundError", "RateLimitError",
-    "BadRequestError", "APIStatusError", "APIConnectionError")})
-
-
-def block(kind, **kw):
-    return types.SimpleNamespace(type=kind, **kw)
-
-
-class Scripted:
-    def __init__(self, turns):
-        self.turns = list(turns)
-        self.calls = []
-        self.beta = types.SimpleNamespace(messages=types.SimpleNamespace(stream=self._stream))
-
-    def _stream(self, **params):
-        # 이후 append 로 바뀌지 않도록 호출 시점 메시지 수를 기록한다
-        self.calls.append(len(params["messages"]))
-        stop, content = self.turns.pop(0)
-        msg = types.SimpleNamespace(stop_reason=stop, content=content)
-        return _Ctx(msg)
-
-
-class _Ctx:
-    def __init__(self, msg):
-        self.msg = msg
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *a):
-        return False
-
-    def get_final_message(self):
-        return self.msg
+PREFS = bpy.context.preferences.addons[PKG].preferences
+TMP = pathlib.Path(tempfile.mkdtemp(prefix="airig_review_test_"))
+os.environ["AIRIG_FAKE_RESPONSES"] = str(TMP / "responses.json")
+os.environ["AIRIG_FAKE_LOG"] = str(TMP / "log.jsonl")
+PREFS.backend = "CODEX"
+PREFS.codex_path = str(ROOT / "tests" / "fixtures" / "fake_ai_cli.py")
+PREFS.review_max_turns = 4
 
 
 bpy.ops.wm.read_homefile(use_empty=True)
@@ -84,20 +55,21 @@ metarig = bpy.data.objects[state.metarig_name]
 knee_before = Vector(json.loads(metarig["airig_joints"])["knee_L"])
 knee_r_before = Vector(json.loads(metarig["airig_joints"])["knee_R"])
 
-fake = Scripted([
-    ("tool_use", [block("tool_use", id="t1", name="render_pose", input={"pose": "squat", "view": "side"})]),
-    ("tool_use", [
-        block("tool_use", id="t2", name="propose_joint_move",
-              input={"joint": "knee_L", "dx": 0.0, "dy": 0.0, "dz": -0.03, "reason": "knee high"}),
-        block("tool_use", id="t3", name="propose_weight_smooth",
-              input={"bone": "DEF-shin.L", "iterations": 3, "reason": "crease"}),
-    ]),
-    ("end_turn", [block("text", text="Knee pivot slightly high; shin weights have a crease.")]),
-])
-claude_client.make_client = lambda settings: fake
+(TMP / "responses.json").write_text(json.dumps([
+    {"render_requests": [{"pose": "squat", "view": "side"}], "proposals": [], "done": False, "summary": ""},
+    {"render_requests": [],
+     "proposals": [
+         {"kind": "move_joint", "target": "knee_L", "dx": 0.0, "dy": 0.0, "dz": -0.03, "iterations": 0, "reason": "knee high"},
+         {"kind": "smooth_weights", "target": "DEF-shin.L", "dx": 0, "dy": 0, "dz": 0, "iterations": 3, "reason": "crease"}],
+     "done": True, "summary": "Knee pivot slightly high; shin weights have a crease."},
+]))
+(TMP / "log.jsonl").write_text("")
 
 check(bpy.ops.airig.ai_review() == {"FINISHED"}, "AI 검토 실행")
-check(len(fake.calls) == 3, f"API 3턴 호출 {fake.calls}")
+calls = [json.loads(line) for line in (TMP / "log.jsonl").read_text().splitlines()]
+check(len(calls) == 2, f"Codex CLI 2라운드 호출 ({len(calls)})")
+check(len(calls[0]["images"]) == 5 and calls[0]["images"][0] == "rest_front.png", f"1라운드 포즈 렌더 {calls[0]['images']}")
+check(calls[1]["images"][-1] == "r1_squat_side.png", "2라운드에 요청 렌더 추가")
 check(len(state.proposals) == 2, f"보정안 2개 저장 ({len(state.proposals)})")
 check("Knee" in state.review_summary, "검토 요약 저장")
 check(not any(s.name.startswith("AIRIG_") for s in bpy.data.scenes), "임시 렌더 씬 정리")

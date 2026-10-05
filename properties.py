@@ -36,7 +36,7 @@ class AIRIG_PG_state(bpy.types.PropertyGroup):
     unweighted_vertices: bpy.props.IntProperty(name="Unweighted Vertices", min=0)
     warnings: bpy.props.StringProperty(name="Warnings")
     ai_joints_used: bpy.props.IntProperty(name="AI Joints Used", min=0)
-    ai_request_id: bpy.props.StringProperty(name="AI Request ID")
+    ai_backend_used: bpy.props.StringProperty(name="AI Backend Used")
     proposals: bpy.props.CollectionProperty(type=AIRIG_PG_proposal)
     review_summary: bpy.props.StringProperty(name="Review Summary")
 

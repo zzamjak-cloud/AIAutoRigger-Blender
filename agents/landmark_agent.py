@@ -1,4 +1,4 @@
-"""Landmark Agent: 직교 렌더 2장 → Claude 비전 → 뷰별 관절 좌표 → 3D 복원·휴리스틱 병합."""
+"""Landmark Agent: 직교 렌더 2장 → AI 백엔드(Claude Code CLI / Codex CLI / API) → 뷰별 관절 좌표 → 3D 복원·휴리스틱 병합."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 
 from ..core.landmark_merge import enforce_bends, merge, triangulate_joints
 from ..core.triangulate import OrthoView
-from . import claude_client, landmark_schema
+from . import landmark_schema
 
 FRONT_NOTE = "The character faces the camera, so the character's LEFT side appears on the IMAGE RIGHT."
 
@@ -18,20 +18,17 @@ class LandmarkResult:
     body_type: str
     notes: str
     warnings: list[str] = field(default_factory=list)
-    request_id: str = ""
 
 
-def ask(client, settings, kind: str, images: dict[str, bytes]) -> tuple[dict, str]:
-    """Claude 호출만 수행한다 (백그라운드 스레드에서 실행 가능, bpy 접근 없음)."""
-    content = [
-        claude_client.image_block(images["front"]),
-        claude_client.image_block(images["side"]),
-        {"type": "text", "text": landmark_schema.user_prompt(kind, FRONT_NOTE)},
-    ]
-    text, message = claude_client.request_json(
-        client, settings, landmark_schema.SYSTEM_PROMPT, content, landmark_schema.response_schema(kind)
+def ask(backend, kind: str, images: dict[str, bytes]) -> dict:
+    """AI 호출만 수행한다 (백그라운드 스레드에서 실행 가능, bpy 접근 없음)."""
+    data = backend.run_json(
+        landmark_schema.SYSTEM_PROMPT,
+        landmark_schema.user_prompt(kind, FRONT_NOTE),
+        [("front", images["front"]), ("side", images["side"])],
+        landmark_schema.response_schema(kind),
     )
-    return landmark_schema.parse_response(text, kind), getattr(message, "airig_request_id", "") or ""
+    return landmark_schema.validate(data, kind)
 
 
 def combine(kind: str, facing: str, heuristic: dict, ai: dict, views: dict[str, OrthoView], size: float, symmetric: bool):
@@ -41,9 +38,8 @@ def combine(kind: str, facing: str, heuristic: dict, ai: dict, views: dict[str, 
     ai3d = triangulate_joints(ai, views)
     merged, used = merge(heuristic, ai3d, size)
     if symmetric:
-        cx = sum(v[0] for k, v in merged.items() if not k.endswith(("_L", "_R"))) / max(
-            1, sum(1 for k in merged if not k.endswith(("_L", "_R")))
-        )
+        centers = [v[0] for k, v in merged.items() if not k.endswith(("_L", "_R"))]
+        cx = sum(centers) / max(1, len(centers))
         for k in [k for k in merged if k.endswith("_L")]:
             r = k[:-2] + "_R"
             if r in merged:

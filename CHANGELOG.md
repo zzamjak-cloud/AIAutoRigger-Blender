@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.2.0]
+
+- AI 백엔드 선택: 로컬에 로그인된 **Claude Code CLI**·**Codex CLI** 를 API 키 없이 사용 (기본 Auto: Claude Code → Codex → API 순), Anthropic API 는 선택지로 유지
+- AI Review Rig 를 라운드 방식(렌더 요청 → Blender 렌더 → 다음 라운드)으로 변경해 세 백엔드가 같은 경로를 사용
+- Preferences 에 CLI 실행 파일 자동 탐색·경로 지정, CLI 모델, 시간 제한 추가. ESC 취소 시 실행 중인 CLI 프로세스 종료
+
 ## [0.1.1]
 
 - 릴리스 패키지에 CI 용 Blender 배포본이 섞여 들어가던 문제 수정 (0.1.0 릴리스 ZIP 은 사용하지 말 것)

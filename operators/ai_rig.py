@@ -1,11 +1,11 @@
-"""AI 보조 자동 리깅: 휴리스틱 → 직교 렌더 → Claude Landmark Agent(백그라운드 스레드) → 병합 → Rigify."""
+"""AI 보조 자동 리깅: 휴리스틱 → 직교 렌더 → Landmark Agent(로컬 CLI 또는 API, 백그라운드 스레드) → 병합 → Rigify."""
 
 import threading
 
 import bpy
 
 from .. import preferences
-from ..agents import claude_client, landmark_agent
+from ..agents import backends, landmark_agent, landmark_schema
 from ..bridge import views
 from . import rig
 
@@ -13,7 +13,7 @@ POLL_INTERVAL = 0.25
 
 
 class AIRIG_OT_ai_auto_rig(bpy.types.Operator):
-    """Claude 비전으로 관절 위치를 보정한 뒤 Rigify 컨트롤 리그를 생성한다 (ESC 로 취소)"""
+    """AI(Claude Code CLI·Codex CLI·API)가 렌더를 보고 관절 위치를 보정한 뒤 Rigify 컨트롤 리그를 생성한다 (ESC 취소)"""
 
     bl_idname = "airig.ai_auto_rig"
     bl_label = "AI Auto Rig"
@@ -35,8 +35,7 @@ class AIRIG_OT_ai_auto_rig(bpy.types.Operator):
         try:
             self.est = rig.estimate(context, context.active_object)
             images, self.views, _size = views.render_views(context, context.active_object, self.est.facing)
-            settings = preferences.agent_settings(context)
-            client = claude_client.make_client(settings)
+            backend = self.backend = backends.create(preferences.backend_settings(context))
         except (ValueError, RuntimeError) as exc:
             self.report({"ERROR"}, str(exc))
             return {"CANCELLED"}
@@ -48,7 +47,7 @@ class AIRIG_OT_ai_auto_rig(bpy.types.Operator):
         def work():
             # bpy 접근 금지: 네트워크 호출만 수행한다
             try:
-                box["result"] = landmark_agent.ask(client, settings, kind, images)
+                box["result"] = landmark_agent.ask(backend, kind, images)
             except Exception as exc:  # 스레드 예외는 메인 스레드에서 보고한다
                 box["error"] = exc
 
@@ -61,11 +60,12 @@ class AIRIG_OT_ai_auto_rig(bpy.types.Operator):
             return self.finish(context)
         self._timer = wm.event_timer_add(POLL_INTERVAL, window=context.window)
         wm.modal_handler_add(self)
-        context.workspace.status_text_set("AI Auto Rig: Claude 가 관절을 분석하는 중… (ESC 취소)")
+        context.workspace.status_text_set(f"AI Auto Rig: {backend.label} 가 관절을 분석하는 중… (ESC 취소)")
         return {"RUNNING_MODAL"}
 
     def modal(self, context, event):
         if event.type == "ESC":
+            self.backend.cancel()
             self.cleanup(context)
             self.report({"WARNING"}, "AI Auto Rig 를 취소했습니다. (진행 중인 요청 결과는 버립니다)")
             return {"CANCELLED"}
@@ -90,17 +90,18 @@ class AIRIG_OT_ai_auto_rig(bpy.types.Operator):
         state = context.scene.airig
         error = self.box["error"]
         if error is not None:
-            msg = str(error) if isinstance(error, (claude_client.AgentError, ValueError)) else repr(error)
+            known = (backends.BackendError, landmark_schema.LandmarkResponseError, ValueError, RuntimeError)
+            msg = str(error) if isinstance(error, known) else repr(error)
             est.warnings.append(f"AI 단계 실패, 휴리스틱만 사용: {msg}")
             state.ai_joints_used = 0
-            state.ai_request_id = ""
+            state.ai_backend_used = ""
         else:
-            ai, request_id = self.box["result"]
+            ai = self.box["result"]
             merged = landmark_agent.combine(est.kind, est.facing, est.joints, ai, self.views, est.size, est.symmetric)
             est.joints = merged.joints
             est.warnings.extend(merged.warnings)
             state.ai_joints_used = len(merged.used_joints)
-            state.ai_request_id = request_id
+            state.ai_backend_used = self.backend.label
         try:
             rig.apply_metarig(self, context, mesh_obj, est)
             result = rig.generate_and_bind(self, context)

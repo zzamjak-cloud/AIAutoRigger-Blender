@@ -36,7 +36,7 @@ class AIRIG_PT_main(bpy.types.Panel):
             box.label(text=f"리그: {state.rig_name} ({state.detected_type})")
             box.label(text=f"웨이트 없는 정점: {state.unweighted_vertices}")
             if state.ai_joints_used:
-                box.label(text=f"AI 반영 관절: {state.ai_joints_used}")
+                box.label(text=f"AI 반영 관절: {state.ai_joints_used} ({state.ai_backend_used})")
         if state.rig_name:
             layout.operator("airig.ai_review", icon="VIEWZOOM")
             layout.operator("airig.export_fbx", icon="EXPORT")

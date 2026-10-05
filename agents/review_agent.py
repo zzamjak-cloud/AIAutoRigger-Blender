@@ -1,7 +1,9 @@
 """Rig Review Agent: 테스트 포즈 렌더를 보고 리그 결함을 찾아 보정안을 제안한다 (bpy 비의존).
 
-도구는 허용 목록만 제공한다. 렌더 요청만 즉시 실행되고, 리그를 바꾸는 도구는 제안으로만 쌓여
-사용자가 승인한 뒤 적용된다. API 호출(step)은 백그라운드 스레드에서, 도구 실행은 메인 스레드에서 한다.
+CLI 백엔드는 Blender 안의 도구를 직접 호출할 수 없으므로 라운드 방식으로 동작한다.
+매 라운드 AI 는 JSON 으로 {추가 렌더 요청, 보정안, 완료 여부, 요약} 을 돌려주고, Blender 가 요청된
+포즈를 렌더해 다음 라운드에 누적 맥락(이미지·이전 보정안)과 함께 다시 보낸다. 세션 재개에 의존하지
+않으므로 Claude Code CLI·Codex CLI·API 가 같은 경로를 쓴다. 보정안은 사용자가 승인해야 적용된다.
 """
 
 from __future__ import annotations
@@ -9,20 +11,20 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 
-from . import claude_client
-
 MAX_MOVE = 0.1  # 관절 이동 한도 (모델 크기 대비)
 MAX_SMOOTH_ITER = 10
+MAX_RENDER_REQUESTS = 4
+MAX_IMAGES = 12  # 한 라운드에 보내는 이미지 상한 (처음 포즈 세트 + 최근 요청분)
 
 SYSTEM_PROMPT = """You review an automatically generated Rigify control rig on a 3D character. You see \
 orthographic renders of the skinned mesh in test poses driven by the rig's IK controls, plus deformation \
 metrics. Find real defects: joints placed outside the limb or at the wrong height, bending at the wrong place, \
-candy-wrapper twisting, collapsing or tearing volume, body parts dragged by the wrong bone. Use render_pose to \
-look at more poses or views when needed. Propose fixes only with the propose_* tools; each proposal is shown to \
-the user, who decides whether to apply it. Names ending in _L / .L are the character's anatomical LEFT, which \
-appears on the IMAGE RIGHT of the front view. Joint offsets are fractions of the model's largest dimension in the \
-front-view frame: dx toward the front image's right edge, dy toward the front camera (the character's front), \
-dz up. Prefer few, high-confidence proposals. When finished, reply with a short summary of what you found."""
+candy-wrapper twisting, collapsing or tearing volume, body parts dragged by the wrong bone. You may request more \
+renders (render_requests) and continue in another round, or finish (done=true). Proposals are shown to the user, \
+who decides whether to apply them. Names ending in _L / .L are the character's anatomical LEFT, which appears on \
+the IMAGE RIGHT of the front view. Joint offsets are fractions of the model's largest dimension in the front-view \
+frame: dx toward the front image's right edge, dy toward the front camera (the character's front), dz up. \
+Prefer few, high-confidence proposals; an empty list is fine when the rig looks correct."""
 
 
 @dataclass
@@ -34,132 +36,143 @@ class Proposal:
     reason: str = ""
 
 
-@dataclass
-class ToolCall:
-    id: str
-    name: str
-    input: dict
+def _is_num(x) -> bool:
+    return isinstance(x, (int, float)) and not isinstance(x, bool)
 
 
 @dataclass
 class ReviewSession:
-    client: object
-    settings: claude_client.AgentSettings
+    backend: object
     joints: list[str]
     deform_bones: list[str]
     poses: list[str]
-    max_turns: int = 6
-    messages: list = field(default_factory=list)
+    max_rounds: int = 4
+    kind: str = ""
+    metrics: str = ""
+    base_images: list = field(default_factory=list)
+    extra_images: list = field(default_factory=list)
     proposals: list[Proposal] = field(default_factory=list)
+    rejected: list[str] = field(default_factory=list)
     summary: str = ""
-    turns: int = 0
+    rounds: int = 0
     done: bool = False
 
-    def tools(self) -> list[dict]:
-        def tool(name, desc, props, required):
-            return {
-                "name": name,
-                "description": desc,
-                "strict": True,
-                "eager_input_streaming": True,
-                "input_schema": {"type": "object", "properties": props, "required": required, "additionalProperties": False},
-            }
-
-        return [
-            tool("render_pose", "Render the skinned mesh in a named test pose from the front or side view.",
-                 {"pose": {"type": "string", "enum": self.poses}, "view": {"type": "string", "enum": ["front", "side"]}},
-                 ["pose", "view"]),
-            tool("propose_joint_move", "Propose moving one joint of the metarig; the rig is regenerated if the user accepts.",
-                 {"joint": {"type": "string", "enum": self.joints},
-                  "dx": {"type": "number"}, "dy": {"type": "number"}, "dz": {"type": "number"},
-                  "reason": {"type": "string"}},
-                 ["joint", "dx", "dy", "dz", "reason"]),
-            tool("propose_weight_smooth", "Propose smoothing the skin weights of one deform bone.",
-                 {"bone": {"type": "string", "enum": self.deform_bones},
-                  "iterations": {"type": "integer"}, "reason": {"type": "string"}},
-                 ["bone", "iterations", "reason"]),
-        ]
+    def schema(self) -> dict:
+        targets = sorted(set(self.joints) | set(self.deform_bones))
+        request = {
+            "type": "object",
+            "properties": {"pose": {"type": "string", "enum": self.poses},
+                           "view": {"type": "string", "enum": ["front", "side"]}},
+            "required": ["pose", "view"],
+            "additionalProperties": False,
+        }
+        proposal = {
+            "type": "object",
+            "properties": {
+                "kind": {"type": "string", "enum": ["move_joint", "smooth_weights"]},
+                "target": {"type": "string", "enum": targets},
+                "dx": {"type": "number"}, "dy": {"type": "number"}, "dz": {"type": "number"},
+                "iterations": {"type": "integer"},
+                "reason": {"type": "string"},
+            },
+            "required": ["kind", "target", "dx", "dy", "dz", "iterations", "reason"],
+            "additionalProperties": False,
+        }
+        return {
+            "type": "object",
+            "properties": {
+                "render_requests": {"type": "array", "items": request},
+                "proposals": {"type": "array", "items": proposal},
+                "done": {"type": "boolean"},
+                "summary": {"type": "string"},
+            },
+            "required": ["render_requests", "proposals", "done", "summary"],
+            "additionalProperties": False,
+        }
 
     def start(self, images: list[tuple[str, bytes]], metrics: str, kind: str):
-        content = []
-        for label, png in images:
-            content.append({"type": "text", "text": label})
-            content.append(claude_client.image_block(png))
-        content.append({"type": "text", "text": f"Body type: {kind}.\nDeformation metrics:\n{metrics}"})
-        self.messages.append({"role": "user", "content": content})
+        self.base_images = list(images)
+        self.metrics = metrics
+        self.kind = kind
 
-    def validate(self, call: ToolCall) -> str | None:
-        """오류 메시지 또는 None. eager 스트리밍은 서버 검증이 없으므로 직접 검사한다."""
-        i = call.input
-        if not isinstance(i, dict):
-            return "input must be an object"
+    def prompt(self) -> str:
+        lines = [
+            f"Body type: {self.kind}. Review round {self.rounds + 1} of at most {self.max_rounds}.",
+            "Images (in order): " + ", ".join(label for label, _ in self._images()),
+            f"Deformation metrics:\n{self.metrics}",
+            "Movable joints (move_joint targets): " + ", ".join(self.joints),
+            "Deform bones (smooth_weights targets, iterations 1-10): " + ", ".join(self.deform_bones),
+            f"Joint offsets must be within ±{MAX_MOVE}; for smooth_weights set dx=dy=dz=0, for move_joint set iterations=0.",
+        ]
+        if self.proposals:
+            prev = [{"kind": p.kind, "target": p.target, "delta": p.delta, "iterations": p.iterations} for p in self.proposals]
+            lines.append("Proposals already queued (repeat one only to replace it): " + json.dumps(prev))
+        if self.rejected:
+            lines.append("Rejected last round (fix and resend if still needed): " + "; ".join(self.rejected[-6:]))
+        if self.rounds + 1 >= self.max_rounds:
+            lines.append("This is the final round: set done=true and leave render_requests empty.")
+        return "\n".join(lines)
 
-        def is_num(x):
-            return isinstance(x, (int, float)) and not isinstance(x, bool)
+    def _images(self):
+        keep = MAX_IMAGES - len(self.base_images)
+        return self.base_images + (self.extra_images[-keep:] if keep > 0 else [])
 
-        if call.name.startswith("propose_") and not isinstance(i.get("reason"), str):
-            return "reason must be a string"
-        if call.name == "render_pose":
-            if i.get("pose") not in self.poses or i.get("view") not in ("front", "side"):
-                return "unknown pose or view"
-        elif call.name == "propose_joint_move":
-            if i.get("joint") not in self.joints:
-                return "unknown joint"
+    def validate(self, p) -> str | None:
+        if not isinstance(p, dict):
+            return "proposal must be an object"
+        kind, target = p.get("kind"), p.get("target")
+        if not isinstance(p.get("reason"), str):
+            return f"{target}: reason must be a string"
+        if kind == "move_joint":
+            if target not in self.joints:
+                return f"{target}: unknown joint"
             for k in ("dx", "dy", "dz"):
-                if not is_num(i.get(k)) or abs(i[k]) > MAX_MOVE:
-                    return f"{k} must be a number within ±{MAX_MOVE}"
-        elif call.name == "propose_weight_smooth":
-            if i.get("bone") not in self.deform_bones:
-                return "unknown bone"
-            it = i.get("iterations")
+                if not _is_num(p.get(k)) or abs(p[k]) > MAX_MOVE:
+                    return f"{target}: {k} must be within ±{MAX_MOVE}"
+        elif kind == "smooth_weights":
+            if target not in self.deform_bones:
+                return f"{target}: unknown bone"
+            it = p.get("iterations")
             if not isinstance(it, int) or isinstance(it, bool) or not 1 <= it <= MAX_SMOOTH_ITER:
-                return f"iterations must be 1..{MAX_SMOOTH_ITER}"
+                return f"{target}: iterations must be 1..{MAX_SMOOTH_ITER}"
         else:
-            return "unknown tool"
+            return f"unknown proposal kind {kind}"
         return None
 
-    def step(self) -> list[ToolCall]:
-        """API 1회 호출. 실행할 도구 호출 목록을 반환하고, 끝났으면 done=True (스레드 안전, bpy 미사용)."""
-        if self.turns >= self.max_turns:
+    def step(self) -> list[tuple[str, str]]:
+        """AI 1라운드 (스레드 안전, bpy 미사용). 추가로 렌더할 (포즈, 뷰) 목록을 반환하고 끝나면 done=True."""
+        result = self.backend.run_json(SYSTEM_PROMPT, self.prompt(), self._images(), self.schema())
+        self.rounds += 1
+        if not isinstance(result, dict):
+            raise ValueError("검토 응답이 JSON 객체가 아닙니다.")
+        self.rejected = []
+        for p in result.get("proposals") or []:
+            error = self.validate(p)
+            if error:
+                self.rejected.append(error)
+                continue
+            if p["kind"] == "move_joint":
+                new = Proposal("move_joint", p["target"], (float(p["dx"]), float(p["dy"]), float(p["dz"])), 0, p["reason"])
+            else:
+                new = Proposal("smooth_weights", p["target"], iterations=int(p["iterations"]), reason=p["reason"])
+            # 같은 대상·종류의 이전 제안은 최신 것으로 바꾼다
+            self.proposals = [q for q in self.proposals if (q.kind, q.target) != (new.kind, new.target)] + [new]
+        if isinstance(result.get("summary"), str) and result["summary"].strip():
+            self.summary = result["summary"].strip()
+        requests = []
+        for r in result.get("render_requests") or []:
+            if isinstance(r, dict) and r.get("pose") in self.poses and r.get("view") in ("front", "side"):
+                key = (r["pose"], r["view"])
+                if key not in requests:
+                    requests.append(key)
+        requests = requests[:MAX_RENDER_REQUESTS]
+        # 거부된 제안이 있으면 렌더 요청이 없어도 한 라운드 더 줘서 고쳐 보낼 기회를 준다
+        if result.get("done") is True or self.rounds >= self.max_rounds or (not requests and not self.rejected):
             self.done = True
-            self.summary = self.summary or "검토 턴 한도에 도달했습니다."
+            if not self.summary:
+                self.summary = "검토 라운드 한도에 도달했습니다." if self.rounds >= self.max_rounds else "검토를 마쳤습니다."
             return []
-        self.turns += 1
-        message = claude_client.request_tools(self.client, self.settings, SYSTEM_PROMPT, self.messages, self.tools())
-        if message is None:
-            # 도구 입력 JSON 을 SDK 가 해석하지 못함: 같은 요청을 다음 턴에 다시 보낸다
-            return []
-        self.messages.append({"role": "assistant", "content": message.content})
-        calls = [ToolCall(b.id, b.name, b.input) for b in message.content if b.type == "tool_use"]
-        if message.stop_reason in ("refusal", "max_tokens"):
-            # 잘린 도구 입력은 실행하지 않는다
-            self.done = True
-            self.summary = "검토 응답이 중단되었습니다." if message.stop_reason == "refusal" else "검토 응답이 길이 제한에 걸렸습니다."
-            return []
-        if not calls:
-            self.done = True
-            self.summary = "\n".join(b.text for b in message.content if b.type == "text").strip()
-        return calls
+        return requests
 
-    def handle(self, call: ToolCall, render) -> dict:
-        """도구 하나를 실행해 tool_result 블록을 만든다 (메인 스레드). render(pose, view) → PNG."""
-        error = self.validate(call)
-        if error:
-            return {"type": "tool_result", "tool_use_id": call.id, "is_error": True,
-                    "content": json.dumps({"INVALID_INPUT": error, "input": call.input}, ensure_ascii=False, default=str)}
-        i = call.input
-        if call.name == "render_pose":
-            try:
-                png = render(i["pose"], i["view"])
-            except (RuntimeError, ValueError, KeyError) as exc:
-                return {"type": "tool_result", "tool_use_id": call.id, "is_error": True, "content": f"render failed: {exc}"}
-            return {"type": "tool_result", "tool_use_id": call.id, "content": [claude_client.image_block(png)]}
-        if call.name == "propose_joint_move":
-            self.proposals.append(Proposal("move_joint", i["joint"], (float(i["dx"]), float(i["dy"]), float(i["dz"])), 0, i["reason"]))
-        else:
-            self.proposals.append(Proposal("smooth_weights", i["bone"], iterations=int(i["iterations"]), reason=i["reason"]))
-        return {"type": "tool_result", "tool_use_id": call.id, "content": "queued for user approval"}
-
-    def submit(self, results: list[dict]):
-        # 병렬 도구 호출 결과는 하나의 user 메시지로 돌려준다
-        self.messages.append({"role": "user", "content": results})
+    def add_renders(self, renders: list[tuple[str, bytes]]):
+        self.extra_images.extend(renders)

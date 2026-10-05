@@ -15,16 +15,19 @@ FRONT = OrthoView("front", (0.0, 0.0, 1.0), (1.0, 0.0, 0.0), (0.0, 0.0, 1.0), (0
 SIDE = OrthoView("side", (0.0, 0.0, 1.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0), (-1.0, 0.0, 0.0), 2.0)
 
 
-def fake_response(points, kind="BIPED", conf=0.9):
-    out = {"body_type": kind, "notes": ""}
+def wire_response(points, kind="BIPED", conf=0.9):
+    """AI 가 돌려주는 점 배열 형식."""
+    out = []
     for view in (FRONT, SIDE):
-        entries = {}
         for name in landmark_schema.joint_names(kind):
             p = points.get(name, (0.0, 0.0, 1.0))
             u, v = view.project(p)
-            entries[name] = {"u": u, "v": v, "visible": name in points, "confidence": conf}
-        out[view.name] = entries
-    return out
+            out.append({"view": view.name, "joint": name, "u": u, "v": v, "visible": name in points, "confidence": conf})
+    return {"body_type": kind, "notes": "", "points": out}
+
+
+def fake_response(points, kind="BIPED", conf=0.9):
+    return landmark_schema.validate(wire_response(points, kind, conf), kind)
 
 
 class TriangulateTest(unittest.TestCase):
@@ -68,23 +71,37 @@ class MergeTest(unittest.TestCase):
 
 
 class SchemaTest(unittest.TestCase):
-    def test_schema_strict_and_complete(self):
+    def test_schema_strict_and_compact(self):
         for kind in ("BIPED", "QUADRUPED"):
             s = landmark_schema.response_schema(kind)
+            # Codex strict output-schema: 모든 계층 additionalProperties=false, 속성 전부 required
             self.assertFalse(s["additionalProperties"])
-            self.assertEqual(set(s["properties"]["front"]["required"]), set(landmark_schema.joint_names(kind)))
+            item = s["properties"]["points"]["items"]
+            self.assertFalse(item["additionalProperties"])
+            self.assertEqual(set(item["required"]), set(item["properties"]))
+            self.assertEqual(set(s["required"]), set(s["properties"]))
+            self.assertEqual(set(item["properties"]["joint"]["enum"]), set(landmark_schema.joint_names(kind)))
+            # Windows cmd.exe 명령줄 한도(8191자) 안에 넉넉히 들어가야 한다
+            self.assertLess(len(json.dumps(s, separators=(",", ":"))), 2000)
             for name in landmark_schema.joint_names(kind):
                 base = name[:-2] if name.endswith(("_L", "_R")) else name
                 self.assertIn(base, landmark_schema.JOINT_DESCRIPTIONS)
 
     def test_parse_clamps_and_validates(self):
-        data = fake_response({"knee_L": (0.1, 0.0, 0.5)})
-        data["front"]["knee_L"]["u"] = 1.7
+        data = wire_response({"knee_L": (0.1, 0.0, 0.5)})
+        knee = next(p for p in data["points"] if p["joint"] == "knee_L" and p["view"] == "front")
+        knee["u"] = 1.7
+        data["points"].append({"view": "top", "joint": "knee_L", "u": 0, "v": 0, "visible": True, "confidence": 1})
+        data["points"].append({"view": "front", "joint": "tail_99", "u": 0, "v": 0, "visible": True, "confidence": 1})
+        data["points"] = [p for p in data["points"] if not (p["joint"] == "knee_R" and p["view"] == "side")]
         parsed = landmark_schema.parse_response(json.dumps(data), "BIPED")
         self.assertEqual(parsed["front"]["knee_L"]["u"], 1.0)
-        del data["side"]["knee_R"]
+        self.assertTrue(parsed["front"]["knee_L"]["visible"])
+        # 빠진 관절은 보이지 않음으로 채운다
+        self.assertFalse(parsed["side"]["knee_R"]["visible"])
+        self.assertNotIn("top", parsed)
         with self.assertRaises(landmark_schema.LandmarkResponseError):
-            landmark_schema.parse_response(json.dumps(data), "BIPED")
+            landmark_schema.parse_response(json.dumps({"body_type": "BIPED", "points": [], "notes": ""}), "BIPED")
         with self.assertRaises(landmark_schema.LandmarkResponseError):
             landmark_schema.parse_response("not json", "BIPED")
 

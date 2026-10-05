@@ -48,33 +48,29 @@ def joint_names(kind: str) -> list[str]:
 
 
 def response_schema(kind: str) -> dict:
+    """점 배열 형식 스키마. 관절마다 속성을 두는 형식보다 훨씬 작아
+    (Windows cmd.exe 명령줄 한도 8191자 안에 들어가도록) CLI 인자로 넘길 수 있다."""
     point = {
         "type": "object",
         "properties": {
+            "view": {"type": "string", "enum": list(VIEW_NAMES)},
+            "joint": {"type": "string", "enum": joint_names(kind)},
             "u": {"type": "number"},
             "v": {"type": "number"},
             "visible": {"type": "boolean"},
             "confidence": {"type": "number"},
         },
-        "required": ["u", "v", "visible", "confidence"],
-        "additionalProperties": False,
-    }
-    names = joint_names(kind)
-    view = {
-        "type": "object",
-        "properties": {n: point for n in names},
-        "required": names,
+        "required": ["view", "joint", "u", "v", "visible", "confidence"],
         "additionalProperties": False,
     }
     return {
         "type": "object",
         "properties": {
             "body_type": {"type": "string", "enum": ["BIPED", "QUADRUPED", "OTHER"]},
-            "front": view,
-            "side": view,
+            "points": {"type": "array", "items": point},
             "notes": {"type": "string"},
         },
-        "required": ["body_type", "front", "side", "notes"],
+        "required": ["body_type", "points", "notes"],
         "additionalProperties": False,
     }
 
@@ -98,6 +94,7 @@ def user_prompt(kind: str, facing_note: str) -> str:
     for name in joint_names(kind):
         base = name[:-2] if name.endswith(("_L", "_R")) else name
         lines.append(f"- {name}: {JOINT_DESCRIPTIONS[base]}")
+    lines.append("Return one entry in points for every joint in each of the two views (view = front or side).")
     lines.append("If the character is not the expected body type, say so in body_type and notes.")
     return "\n".join(lines)
 
@@ -107,20 +104,37 @@ class LandmarkResponseError(ValueError):
 
 
 def parse_response(text: str, kind: str) -> dict:
-    """구조화 출력 JSON 을 파싱·검증한다. 좌표 범위·신뢰도를 0~1 로 제한한다."""
+    """구조화 출력 JSON 텍스트를 파싱·검증한다."""
     try:
         data = json.loads(text)
     except json.JSONDecodeError as exc:
         raise LandmarkResponseError(f"JSON 파싱 실패: {exc}") from exc
-    for view in VIEW_NAMES:
-        joints = data.get(view)
-        if not isinstance(joints, dict):
-            raise LandmarkResponseError(f"{view} 뷰가 없습니다.")
-        for name in joint_names(kind):
-            e = joints.get(name)
-            if not isinstance(e, dict) or not all(k in e for k in ("u", "v", "visible", "confidence")):
-                raise LandmarkResponseError(f"{view}.{name} 항목이 올바르지 않습니다.")
-            for k in ("u", "v", "confidence"):
-                e[k] = min(1.0, max(0.0, float(e[k])))
-            e["visible"] = bool(e["visible"])
-    return data
+    return validate(data, kind)
+
+
+def validate(data, kind: str) -> dict:
+    """점 배열 응답을 뷰별 dict({view: {joint: entry}})로 정리·검증한다.
+
+    좌표·신뢰도는 0~1 로 제한하고, 빠진 관절은 보이지 않음으로 둔다 (CLI 백엔드는 스키마 강제가 느슨할 수 있다).
+    """
+    if not isinstance(data, dict) or not isinstance(data.get("points"), list):
+        raise LandmarkResponseError("응답에 points 배열이 없습니다.")
+    names = set(joint_names(kind))
+    out = {"body_type": data.get("body_type"), "notes": data.get("notes") if isinstance(data.get("notes"), str) else ""}
+    views = {v: {} for v in VIEW_NAMES}
+    for e in data["points"]:
+        if not isinstance(e, dict) or e.get("view") not in views or e.get("joint") not in names:
+            continue
+        try:
+            entry = {k: min(1.0, max(0.0, float(e[k]))) for k in ("u", "v", "confidence")}
+        except (KeyError, TypeError, ValueError):
+            continue
+        entry["visible"] = e.get("visible") is True
+        views[e["view"]][e["joint"]] = entry
+    if not any(views.values()):
+        raise LandmarkResponseError("유효한 관절 좌표가 하나도 없습니다.")
+    for v in VIEW_NAMES:
+        for n in names:
+            views[v].setdefault(n, {"u": 0.5, "v": 0.5, "visible": False, "confidence": 0.0})
+    out.update(views)
+    return out

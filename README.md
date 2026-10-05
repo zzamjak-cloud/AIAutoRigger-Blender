@@ -1,6 +1,6 @@
 # AI Auto Rigger (Blender Extension)
 
-캐릭터 메시를 분석해 Rigify 컨트롤 리그(팔다리 IK)를 자동 생성하고, Claude 비전 에이전트로 관절 위치를 보정·검토하는 Blender Extension. 설계와 단계별 계획은 [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md) 참고.
+캐릭터 메시를 분석해 Rigify 컨트롤 리그(팔다리 IK)를 자동 생성하고, 로컬 AI 에이전트(Claude Code CLI·Codex CLI) 또는 Claude API 로 관절 위치를 보정·검토하는 Blender Extension. 설계와 단계별 계획은 [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md) 참고.
 
 - Extension id: `ai_auto_rigger` · 최소 Blender 4.2 (개발 검증: 5.2 LTS, macOS arm64)
 - 대상: 인간형 2족(사실·과장 비율, T/A-포즈), 4족(네 발 선 자세, 꼬리 자동 감지)
@@ -11,17 +11,30 @@
 | 버튼 | 동작 |
 |---|---|
 | **Body Type** | Auto(다리 수로 판별) / Biped / Quadruped |
-| **AI Auto Rig** | 휴리스틱 관절 추정 → 정면·측면 렌더를 Claude 가 분석 → 신뢰도 가중 병합 → Rigify 생성·바인딩. AI 실패·거절 시 휴리스틱으로 계속 |
+| **AI Auto Rig** | 휴리스틱 관절 추정 → 정면·측면 렌더를 AI(Claude Code CLI·Codex CLI·API)가 분석 → 신뢰도 가중 병합 → Rigify 생성·바인딩. AI 실패·거절 시 휴리스틱으로 계속 |
 | **Auto Rig** | AI 없이 휴리스틱만으로 메타리그 피팅 → Rigify 컨트롤 리그 → 자동 웨이트 |
 | **Fit Metarig** / **Generate Control Rig** | 위 과정을 나눠 실행 (생성 전 메타리그 수동 보정 가능) |
-| **AI Review Rig** | 테스트 포즈 렌더·변형 지표를 Claude 가 검토해 관절 이동·웨이트 스무딩 보정안을 제안. **체크한 항목만 Apply Selected 로 적용** |
+| **AI Review Rig** | 테스트 포즈 렌더·변형 지표를 AI 가 라운드 방식으로 검토(필요하면 추가 포즈 렌더 요청)해 관절 이동·웨이트 스무딩 보정안을 제안. **체크한 항목만 Apply Selected 로 적용** |
 | **Export Game FBX** | DEF 본 계층을 정리한 게임용 FBX. 2족은 Unity Humanoid 이름 + 매핑 JSON, 4족은 Generic. 애니메이션은 DEF 본으로 굽는다 |
 
 생성 리그는 Rigify 표준이므로 IK/FK 전환, 발 구르기, 폴 타깃 등은 Rigify 리그 UI 에서 사용한다. 팔다리는 IK 모드로 생성된다.
 
-### AI 설정
+### AI 설정 (로컬 CLI 또는 API)
 
-**Edit > Preferences > Add-ons > AI Auto Rigger** 에서 Anthropic API 키를 입력한다(비우면 `ANTHROPIC_API_KEY` 환경 변수 사용). 기본 모델 `claude-opus-5-5`, 관절 분석 effort `medium`, 검토 effort `high`, 검토 최대 턴 6. 렌더 이미지(메시 형상)가 Anthropic API 로 전송된다. 키가 없으면 Auto Rig(휴리스틱)만 사용할 수 있다. Preferences 에 입력한 키는 Blender 사용자 설정 파일(`userpref.blend`)에 평문으로 저장되므로, 공유 PC 에서는 환경 변수를 권장한다.
+**Edit > Preferences > Add-ons > AI Auto Rigger** 의 **AI Backend** 에서 고른다.
+
+| 백엔드 | 인증 | 호출 방식 |
+|---|---|---|
+| **Auto** (기본) | — | 설치된 Claude Code CLI → Codex CLI → API 키 순으로 사용 |
+| **Claude Code CLI** | `claude` 에 로그인된 계정(구독) | `claude -p --json-schema …`, Read 도구만 허용, 사용자 설정·MCP 미사용 |
+| **Codex CLI** | `codex` 에 로그인된 계정 | `codex exec -i <렌더> --output-schema …`, 읽기 전용 샌드박스 |
+| **Anthropic API** | API 키 또는 `ANTHROPIC_API_KEY` | 번들 anthropic SDK, 기본 모델 `claude-opus-5-5` |
+
+- CLI 는 PATH 와 흔한 설치 위치(`~/.local/bin`, `~/.npm-global/bin`, `/opt/homebrew/bin` 등)에서 자동으로 찾는다. Finder·Dock 으로 연 Blender 는 셸 PATH 를 물려받지 않으므로 못 찾으면 경로를 직접 지정한다. Preferences 에 찾은 경로가 표시된다.
+- CLI 모델을 비우면 각 CLI 의 기본 모델을 쓴다. 관절 분석 effort `medium`, 검토 effort `high`, 검토 최대 4라운드, 시간 제한 600초.
+- CLI 백엔드는 API 요금 대신 각 구독의 사용량 한도를 쓰며, 호출마다 CLI 기동 시간(수 초 이상)이 더해진다.
+- 렌더 이미지(메시 형상)가 선택한 서비스로 전송된다. API 키를 Preferences 에 넣으면 `userpref.blend` 에 평문 저장되므로 공유 PC 에서는 환경 변수를 권장한다.
+- AI 백엔드를 쓸 수 없으면 Auto Rig(휴리스틱)만 사용할 수 있다.
 
 ## 사용자 설치 (원격 저장소)
 
@@ -74,8 +87,8 @@ scripts\dev_run.ps1 -Background -PythonExpr "import bpy"
 python3 -m unittest discover -s tests                               # 순수 Python 단위·정적 검사
 scripts/dev_run.sh --background --python tests/blender_smoke.py     # 등록·분석·해제
 scripts/dev_run.sh --background --python tests/blender_rig_test.py  # 2족·4족 자동 리깅, IK 동작, rest 변형 0
-scripts/dev_run.sh --background --python tests/blender_ai_test.py   # AI Auto Rig (모의 Claude, 비용 없음)
-scripts/dev_run.sh --background --python tests/blender_review_test.py  # AI 검토·보정안 적용 (모의 Claude)
+scripts/dev_run.sh --background --python tests/blender_ai_test.py   # AI Auto Rig: API(모의 SDK)·Claude Code·Codex(가짜 CLI), 비용 없음
+scripts/dev_run.sh --background --python tests/blender_review_test.py  # AI 검토 라운드·보정안 적용 (가짜 Codex CLI)
 scripts/dev_run.sh --background --python tests/blender_export_test.py -- dist/export_test  # 게임 FBX 재임포트 검증
 scripts/unity_avatar_check.sh dist/export_test/biped_unity.fbx      # Unity Humanoid 아바타 매핑 (Unity CLI 필요)
 ```

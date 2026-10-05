@@ -1,4 +1,4 @@
-"""AI Auto Rig 통합 테스트 (Claude 호출은 모의 클라이언트로 대체, 네트워크·비용 없음).
+"""AI Auto Rig 통합 테스트: API(모의 SDK 클라이언트)·Claude Code CLI·Codex CLI(가짜 실행 파일) 세 백엔드. 네트워크·비용 없음.
 
 실행: scripts/dev_run.sh --background --python tests/blender_ai_test.py
 """
@@ -8,6 +8,7 @@ import json
 import os
 import pathlib
 import sys
+import tempfile
 import types
 from math import dist
 
@@ -62,22 +63,26 @@ class FakeStream:
         return self.message
 
 
+def make_payload(truth, specs, kind, conf=1.0):
+    """정답 관절을 각 뷰에 투영한 Landmark 응답."""
+    points = []
+    for spec in specs:
+        for name in landmark_schema.joint_names(kind):
+            p = truth.get(name)
+            if p is None:
+                points.append({"view": spec.name, "joint": name, "u": 0.5, "v": 0.5, "visible": False, "confidence": 0.0})
+            else:
+                u, v = spec.project(p)
+                points.append({"view": spec.name, "joint": name, "u": u, "v": v, "visible": True, "confidence": conf})
+    return {"body_type": kind, "notes": "", "points": points}
+
+
 class FakeClient:
     """요청 파라미터를 기록하고 정답 관절을 투영한 응답을 돌려준다."""
 
     def __init__(self, truth, specs, kind, conf=1.0, stop_reason="end_turn"):
         self.calls = []
-        payload = {"body_type": kind, "notes": ""}
-        for spec in specs:
-            entries = {}
-            for name in landmark_schema.joint_names(kind):
-                p = truth.get(name)
-                if p is None:
-                    entries[name] = {"u": 0.5, "v": 0.5, "visible": False, "confidence": 0.0}
-                else:
-                    u, v = spec.project(p)
-                    entries[name] = {"u": u, "v": v, "visible": True, "confidence": conf}
-            payload[spec.name] = entries
+        payload = make_payload(truth, specs, kind, conf)
         text = types.SimpleNamespace(type="text", text=json.dumps(payload))
         self.message = types.SimpleNamespace(stop_reason=stop_reason, content=[text], _request_id="req_test")
         self.beta = types.SimpleNamespace(messages=types.SimpleNamespace(stream=self._stream))
@@ -114,6 +119,32 @@ def metarig_error(kind, gt, size):
     return sum(errs) / len(errs)
 
 
+PREFS = bpy.context.preferences.addons[PKG].preferences
+FAKE_CLI = ROOT / "tests" / "fixtures" / "fake_ai_cli.py"
+TMP = pathlib.Path(tempfile.mkdtemp(prefix="airig_ai_test_"))
+os.environ["AIRIG_FAKE_RESPONSES"] = str(TMP / "responses.json")
+os.environ["AIRIG_FAKE_LOG"] = str(TMP / "log.jsonl")
+PREFS.claude_path = str(FAKE_CLI)
+PREFS.codex_path = str(FAKE_CLI)
+
+
+def run_cli(variant, kind, backend, obj, gt, specs, base_err, size):
+    PREFS.backend = backend
+    (TMP / "responses.json").write_text(json.dumps([make_payload(gt, specs, kind)]))
+    log = TMP / "log.jsonl"
+    log.write_text("")
+    bpy.context.view_layer.objects.active = obj
+    check(bpy.ops.airig.ai_auto_rig() == {"FINISHED"}, f"{variant}: AI Auto Rig ({backend})")
+    call = json.loads(log.read_text().splitlines()[0])
+    check(call["cli"] == ("codex" if backend == "CODEX" else "claude"), f"{variant}: {backend} 실행 파일 호출")
+    check(call["images"] == ["front.png", "side.png"], f"{variant}: {backend} 에 렌더 2장 전달")
+    check(set(call["schema_keys"]) == {"body_type", "points", "notes"}, f"{variant}: {backend} 응답 스키마 전달")
+    state = bpy.context.scene.airig
+    check(state.ai_joints_used >= 8 and state.ai_backend_used, f"{variant}: {backend} AI 반영 관절 {state.ai_joints_used}개 ({state.ai_backend_used})")
+    err = metarig_error(kind, gt, size)
+    check(err < base_err, f"{variant}: {backend} 병합으로 오차 감소 {base_err:.4f} → {err:.4f}")
+
+
 def run(module, variant, kind):
     bpy.ops.wm.read_homefile(use_empty=True)
     obj, gt = make_mesh(module, variant)
@@ -125,6 +156,7 @@ def run(module, variant, kind):
 
     bpy.context.view_layer.objects.active = obj
     specs, _ = views_mod.view_specs(obj, "-Y")
+    PREFS.backend = "API"
     fake = FakeClient(gt, specs, kind)
     claude_client.make_client = lambda settings: fake
     claude_client._sdk = lambda: STUB_SDK
@@ -148,7 +180,11 @@ def run(module, variant, kind):
     check(all(pb["IK_FK"] == 0.0 for pb in rig.pose.bones if "IK_FK" in pb), f"{variant}: IK 모드 유지")
     check(not any(s.name.startswith("AIRIG_") for s in bpy.data.scenes), f"{variant}: 임시 렌더 씬 정리")
 
+    for backend in ("CLAUDE_CODE", "CODEX"):
+        run_cli(variant, kind, backend, obj, gt, specs, base_err, size)
+
     # 실패 경로: 거절 응답이면 휴리스틱으로 계속한다
+    PREFS.backend = "API"
     fake_refusal = FakeClient(gt, specs, kind, stop_reason="refusal")
     claude_client.make_client = lambda settings: fake_refusal
     bpy.context.view_layer.objects.active = obj

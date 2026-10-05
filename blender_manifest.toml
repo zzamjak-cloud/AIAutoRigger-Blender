@@ -1,7 +1,7 @@
 schema_version = "1.0.0"
 
 id = "ai_auto_rigger"
-version = "0.1.1"
+version = "0.2.0"
 name = "AI Auto Rigger"
 tagline = "AI agent assisted automatic character rigging"
 maintainer = "zzamjak-cloud"
@@ -49,7 +49,7 @@ wheels = [
 ]
 
 [permissions]
-network = "Send renders to the Claude API for joint analysis"
+network = "Send renders to Claude Code, Codex or the Claude API"
 files = "Export rigged characters as FBX files"
 
 [build]
