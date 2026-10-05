@@ -33,6 +33,7 @@ jobs:
         run: |
           python scripts/fetch_wheels.py
           blender/blender --factory-startup --command extension validate .
+          mkdir -p dist
           blender/blender --factory-startup --command extension build --split-platforms --source-dir . --output-dir dist
           for z in dist/*.zip; do blender/blender --factory-startup --command extension validate "$z"; done
       - name: GitHub Release 생성
