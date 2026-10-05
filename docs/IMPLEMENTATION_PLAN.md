@@ -59,7 +59,7 @@
 | **P3 Landmark Agent** (완료, 실 API 미검증) | 다중 뷰 렌더, Claude 비전 호출(구조화 출력), 2D→3D 삼각측량, 메시 내부 스냅, 휴리스틱 결과와 신뢰도 기반 병합, Preferences·네트워크 권한·wheel 번들 | P2 기준에서 휴리스틱 대비 관절 오차 개선 확인 |
 | **P4 Rig Review Agent** (완료, 실 API 미검증) | 테스트 포즈 렌더, 허용 목록 도구 루프, 변경 미리보기·승인 UI, 실행 취소 지원 | 의도적으로 틀어진 리그를 루프가 기준치 이내로 보정 |
 | **P5 컨트롤 리그·내보내기** (완료) | Rigify Generate 옵션(2족·4족), 컨트롤 리그 애니메이션을 DEF 본으로 굽기, Unity Humanoid(2족)/Generic(4족) 본 이름 매핑, FBX 내보내기 프리셋 | Unity Humanoid 아바타 자동 매핑 성공, 4족 Generic 임포트·재생 확인 |
-| **P6 배포** (로컬 준비 완료, 공개 저장소·릴리스는 승인 대기) | GitHub 저장소 `zzamjak-cloud/AIAutoRigger-Blender`, CI(정적 + Blender smoke), 태그 릴리스 ZIP, Pages `index.json` 원격 저장소 | 별도 인수 프로필에서 원격 설치→업데이트 확인 |
+| **P6 배포** (완료: v0.1.1 릴리스·Pages 원격 설치 확인) | GitHub 저장소 `zzamjak-cloud/AIAutoRigger-Blender`, CI(정적 + Blender smoke), 태그 릴리스 ZIP, Pages `index.json` 원격 저장소 | 별도 인수 프로필에서 원격 설치→업데이트 확인 |
 
 P1·P2를 P3보다 먼저 두는 이유: AI 결과를 비교할 기준선과 측정 도구가 있어야 프롬프트·모델·effort 조정 효과를 판단할 수 있다.
 
@@ -121,4 +121,5 @@ scripts/                 dev_run.{sh,ps1,bat}, dev_bootstrap.py, build.sh
 - 메타리그 본을 옮긴 뒤 템플릿 Z축 방향으로 roll 을 다시 맞추지 않으면 B-Bone 이 rest 에서 꼬인다.
 - Rigify DEF 계층은 허벅지·어깨가 끊겨 있고 꼬리는 역방향이므로, 게임 FBX 는 메타리그 계층으로 DEF 본을 다시 잇는 별도 아마추어로 내보낸다.
 - 원격 index 에 같은 플랫폼 다중 버전이 있으면 Blender 가 첫 항목을 설치하므로 Pages 에는 최신 릴리스만 둔다.
+- CI 에서 Blender 를 저장소 안에 풀면 Extension 빌드에 섞인다(v0.1.0 사고). 반드시 RUNNER_TEMP 에 설치한다.
 - Unity 6000.0.69f1 에서 Humanoid 아바타 유효·필수 본 매핑 일치 확인 (`scripts/unity_avatar_check.sh`).
