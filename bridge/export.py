@@ -24,11 +24,19 @@ for _s, _w in (("L", "Left"), ("R", "Right")):
         f"DEF-shin.{_s}": f"{_w}LowerLeg", f"DEF-shin.{_s}.001": f"{_w}LowerLegTwist",
         f"DEF-foot.{_s}": f"{_w}Foot", f"DEF-toe.{_s}": f"{_w}Toes", f"DEF-pelvis.{_s}": f"{_w}Pelvis",
     })
+for _s, _w in (("L", "Left"), ("R", "Right")):
+    for _rigify, _unity in (("thumb", "Thumb"), ("f_index", "Index"), ("f_middle", "Middle"), ("f_ring", "Ring"), ("f_pinky", "Little")):
+        for _n, _part in (("01", "Proximal"), ("02", "Intermediate"), ("03", "Distal")):
+            UNITY_BIPED[f"DEF-{_rigify}.{_n}.{_s}"] = f"{_w}{_unity}{_part}"
+        UNITY_BIPED[f"DEF-{_rigify}.01.{_s}.001"] = f"{_w}{_unity}ProximalTwist"
+
 # Unity HumanBodyBones → 위 이름 (아바타 수동 매핑용 JSON)
 HUMANOID_BONES = (
     "Hips", "Spine", "Chest", "UpperChest", "Neck", "Head",
     *[f"{w}{p}" for w in ("Left", "Right") for p in
       ("Shoulder", "UpperArm", "LowerArm", "Hand", "UpperLeg", "LowerLeg", "Foot", "Toes")],
+    *[f"{w}{f}{p}" for w in ("Left", "Right") for f in ("Thumb", "Index", "Middle", "Ring", "Little")
+      for p in ("Proximal", "Intermediate", "Distal")],
 )
 GAME_TAG = "airig_game"
 

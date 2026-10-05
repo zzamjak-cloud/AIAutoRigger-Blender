@@ -3,7 +3,7 @@
 캐릭터 메시를 분석해 Rigify 컨트롤 리그(팔다리 IK)를 자동 생성하고, 로컬 AI 에이전트(Claude Code CLI·Codex CLI) 또는 Claude API 로 관절 위치를 보정·검토하는 Blender Extension. 설계와 단계별 계획은 [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md) 참고.
 
 - Extension id: `ai_auto_rigger` · 최소 Blender 4.2 (개발 검증: 5.2 LTS, macOS arm64)
-- 대상: 인간형 2족(사실·과장 비율, T/A-포즈), 4족(네 발 선 자세, 꼬리 자동 감지)
+- 대상: 인간형 2족(사실·과장 비율, T/A-포즈, 손가락 1~5개 자동 감지), 4족(네 발 선 자세, 꼬리 자동 감지)
 - 입력 조건: Z-up, 정면 -Y 또는 +Y(자동 감지), 좌우 대칭 권장
 
 ## 기능 (3D 뷰 사이드바 **AI Rig** 탭)
@@ -11,6 +11,7 @@
 | 버튼 | 동작 |
 |---|---|
 | **Body Type** | Auto(다리 수로 판별) / Biped / Quadruped |
+| **Fingers** | 2족 손가락 감지 켜기/끄기(기본 켬). 손가락 끝을 표면 거리로 찾아 Rigify 손가락(palm + 3마디)을 만들고 엄지를 자동 판별. 손가락 끝이 손바닥에 붙은 주먹 자세는 감지하지 못한다 |
 | **AI Auto Rig** | 휴리스틱 관절 추정 → 정면·측면 렌더를 AI(Claude Code CLI·Codex CLI·API)가 분석 → 신뢰도 가중 병합 → Rigify 생성·바인딩. AI 실패·거절 시 휴리스틱으로 계속 |
 | **Auto Rig** | AI 없이 휴리스틱만으로 메타리그 피팅 → Rigify 컨트롤 리그 → 자동 웨이트 |
 | **Fit Metarig** / **Generate Control Rig** | 위 과정을 나눠 실행 (생성 전 메타리그 수동 보정 가능) |
@@ -87,6 +88,7 @@ scripts\dev_run.ps1 -Background -PythonExpr "import bpy"
 python3 -m unittest discover -s tests                               # 순수 Python 단위·정적 검사
 scripts/dev_run.sh --background --python tests/blender_smoke.py     # 등록·분석·해제
 scripts/dev_run.sh --background --python tests/blender_rig_test.py  # 2족·4족 자동 리깅, IK 동작, rest 변형 0
+scripts/dev_run.sh --background --python tests/blender_finger_test.py  # 손가락 검출·Rigify 손가락 굽힘 (곧은 손·갈고리 손)
 scripts/dev_run.sh --background --python tests/blender_ai_test.py   # AI Auto Rig: API(모의 SDK)·Claude Code·Codex(가짜 CLI), 비용 없음
 scripts/dev_run.sh --background --python tests/blender_review_test.py  # AI 검토 라운드·보정안 적용 (가짜 Codex CLI)
 scripts/dev_run.sh --background --python tests/blender_export_test.py -- dist/export_test  # 게임 FBX 재임포트 검증

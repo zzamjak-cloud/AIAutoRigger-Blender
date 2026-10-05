@@ -30,6 +30,8 @@ class AIRIG_PG_state(bpy.types.PropertyGroup):
         default="AUTO",
     )
     detected_type: bpy.props.StringProperty(name="Detected Type")
+    use_fingers: bpy.props.BoolProperty(name="Fingers", description="2족 손가락을 감지해 Rigify 손가락 리그를 만든다", default=True)
+    finger_count: bpy.props.IntProperty(name="Finger Count", min=0)
     target_mesh: bpy.props.StringProperty(name="Target Mesh")
     metarig_name: bpy.props.StringProperty(name="Metarig")
     rig_name: bpy.props.StringProperty(name="Control Rig")

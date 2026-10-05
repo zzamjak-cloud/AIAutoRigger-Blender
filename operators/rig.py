@@ -1,6 +1,7 @@
 import bpy
 
 from ..bridge import mesh_io, rigify_bridge
+from ..core import fingers as finger_core
 from ..core.biped_landmarks import estimate_biped
 from ..core.body_type import QUADRUPED, classify
 from ..core.mesh_analysis import analyze_points
@@ -18,7 +19,7 @@ def _mesh_poll(context):
 class Estimate:
     """휴리스틱 관절 추정 결과 (AI 단계 입력으로도 쓰인다)."""
 
-    def __init__(self, kind, joints, facing, size, has_tail, symmetric, warnings):
+    def __init__(self, kind, joints, facing, size, has_tail, symmetric, warnings, fingers=None):
         self.kind = kind
         self.joints = joints
         self.facing = facing
@@ -26,6 +27,7 @@ class Estimate:
         self.has_tail = has_tail
         self.symmetric = symmetric
         self.warnings = list(warnings)
+        self.fingers = fingers or {}
 
 
 def estimate(context, mesh_obj):
@@ -43,16 +45,43 @@ def estimate(context, mesh_obj):
         lm = estimate_quadruped(points, symmetric=symmetric)
         return Estimate(kind, lm.joints, lm.facing, lm.size, lm.has_tail, symmetric, lm.warnings)
     lm = estimate_biped(points, symmetric=symmetric)
-    return Estimate(kind, lm.joints, lm.facing, max(analysis.dimensions), False, symmetric, lm.warnings)
+    est = Estimate(kind, lm.joints, lm.facing, max(analysis.dimensions), False, symmetric, lm.warnings)
+    if context.scene.airig.use_fingers:
+        est.fingers = detect_hand_fingers(context, mesh_obj, est)
+    return est
+
+
+def detect_hand_fingers(context, mesh_obj, est):
+    """양손 손가락 검출. 대칭이면 좌우를 거울 평균한다. 손가락이 보이지 않는 손은 빠진다."""
+    front = (0.0, -1.0, 0.0) if est.facing == "-Y" else (0.0, 1.0, 0.0)
+    hands = {}
+    for side in ("L", "R"):
+        wrist, tip = est.joints[f"wrist_{side}"], est.joints[f"hand_tip_{side}"]
+        verts, edges = mesh_io.hand_graph(context, mesh_obj, wrist, tip)
+        hand = finger_core.detect_fingers(verts, edges, wrist, tip, front=front)
+        if hand is not None:
+            hands[side] = hand
+            est.warnings.extend(hand.warnings)
+    if est.symmetric and len(hands) == 2:
+        cx = 0.5 * (est.joints["hip_L"][0] + est.joints["hip_R"][0])
+        hands["L"], hands["R"] = finger_core.symmetrize(hands["L"], hands["R"], cx)
+    elif est.symmetric and len(hands) == 1:
+        cx = 0.5 * (est.joints["hip_L"][0] + est.joints["hip_R"][0])
+        side, hand = next(iter(hands.items()))
+        hands["R" if side == "L" else "L"] = finger_core.mirror(hand, cx)
+    if not hands:
+        est.warnings.append("손가락을 찾지 못해 손 본까지만 만들었습니다.")
+    return hands
 
 
 def apply_metarig(op, context, mesh_obj, est):
     metarig = rigify_bridge.build_metarig(
         context, est.kind, est.joints, f"{mesh_obj.name}_metarig",
-        has_tail=est.has_tail, facing=est.facing, symmetric=est.symmetric,
+        has_tail=est.has_tail, facing=est.facing, symmetric=est.symmetric, fingers=est.fingers,
     )
     state = context.scene.airig
     state.detected_type = est.kind
+    state.finger_count = sum(len(h.fingers) for h in est.fingers.values())
     state.target_mesh = mesh_obj.name
     state.metarig_name = metarig.name
     state.warnings = " / ".join(est.warnings)

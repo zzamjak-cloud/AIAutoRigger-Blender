@@ -7,6 +7,7 @@ from collections import defaultdict
 import bpy
 from mathutils import Euler, Matrix, Vector
 
+from ..core import fingers
 from ..core.landmark_merge import enforce_bends
 from . import rigify_bridge, views, weights
 
@@ -161,8 +162,9 @@ def apply_proposals(context, proposals):
         joints = enforce_bends(joints, kind, facing)
         has_tail = bool(metarig.get("airig_has_tail", False))
         name = metarig.name
+        hands = {s: fingers.HandFingers.from_dict(d) for s, d in json.loads(metarig.get("airig_fingers", "{}")).items()}
         new_meta = rigify_bridge.build_metarig(context, kind, joints, name, has_tail=has_tail,
-                                               facing=facing, symmetric=symmetric)
+                                               facing=facing, symmetric=symmetric, fingers=hands)
         rig = rigify_bridge.generate_rig(context, new_meta, rig.name)
         context.scene.airig.unweighted_vertices = rigify_bridge.bind_mesh(context, mesh, rig)
     smoothed = 0

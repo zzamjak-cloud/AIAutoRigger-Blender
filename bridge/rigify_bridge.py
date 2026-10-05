@@ -105,7 +105,48 @@ def remove_generated(name):
             bpy.data.armatures.remove(data)
 
 
-def build_metarig(context, kind, joints, name, has_tail=True, facing="-Y", symmetric=False):
+def _add_fingers(metarig, ebones, side, hand):
+    """Rigify 정식 손가락 구조: hand → palm.0N (super_palm 은 palm.01) → 손가락 3마디 (super_finger), 엄지는 palm.01 아래."""
+    from mathutils import Vector
+
+    wrist = Vector(hand.wrist)
+    dorsal = Vector(hand.dorsal)
+    regular = [f for f in hand.fingers if f.name != "thumb"]
+    thumb = next((f for f in hand.fingers if f.name == "thumb"), None)
+    hand_bone = ebones[f"hand.{side}"]
+    if regular:
+        mean_base = sum((Vector(f.base) for f in regular), Vector()) / len(regular)
+        # 손 본은 손바닥 앞쪽에서 끝나야 손가락·손바닥 본과 겹치지 않는다
+        hand_bone.tail = wrist.lerp(mean_base, 0.45)
+        hand_bone.align_roll(dorsal)
+    palms = []
+    for k, f in enumerate(regular):
+        palm = ebones.new(f"palm.{k + 1:02d}.{side}")
+        palm.head = wrist.lerp(Vector(f.base), 0.15)
+        palm.tail = Vector(f.base)
+        palm.parent = hand_bone
+        palm.align_roll(dorsal)
+        palms.append(palm)
+    created = [p.name for p in palms]
+    for f in hand.fingers:
+        parent = palms[0] if (f.name == "thumb" and palms) else (palms[regular.index(f)] if f in regular else hand_bone)
+        prev = None
+        for seg in range(3):
+            eb = ebones.new(f"{f.name}.{seg + 1:02d}.{side}")
+            eb.head = Vector(f.points[seg])
+            eb.tail = Vector(f.points[seg + 1])
+            if prev is None:
+                eb.parent = parent
+            else:
+                eb.parent = prev
+                eb.use_connect = True
+            eb.align_roll(dorsal)
+            created.append(eb.name)
+            prev = eb
+    return created, palms[0].name if palms else None, [f"{f.name}.01.{side}" for f in hand.fingers]
+
+
+def build_metarig(context, kind, joints, name, has_tail=True, facing="-Y", symmetric=False, fingers=None):
     """체형별 basic 메타리그를 만들고 관절 위치로 본을 재배치한다."""
     ensure_rigify()
     if context.mode != "OBJECT":
@@ -160,8 +201,19 @@ def build_metarig(context, kind, joints, name, has_tail=True, facing="-Y", symme
             eb.tail = joints[t]
         for bone_name, z in z_axes.items():
             ebones[bone_name].align_roll(z)
+        rig_types = {}
+        if kind == "BIPED" and fingers:
+            for side, hand in fingers.items():
+                _created, palm_root, finger_roots = _add_fingers(metarig, ebones, side, hand)
+                if palm_root:
+                    rig_types[palm_root] = "limbs.super_palm"
+                for root in finger_roots:
+                    rig_types[root] = "limbs.super_finger"
     finally:
         bpy.ops.object.mode_set(mode="OBJECT")
+    for bone_name, rig_type in rig_types.items():
+        metarig.pose.bones[bone_name].rigify_type = rig_type
+    metarig["airig_fingers"] = json.dumps({s: h.to_dict() for s, h in (fingers or {}).items()})
     return metarig
 
 

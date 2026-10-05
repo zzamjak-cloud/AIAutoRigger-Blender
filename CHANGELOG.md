@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0]
+
+- 2족 손가락 자동 리깅: 손목에서의 측지 거리 국소 최대점을 손가락 끝으로 보고(돌출도로 주름·평면 제외), 등고선 단면 중심을 이어 관절을 손가락 안쪽에 배치. 굽은 갈고리 손가락·로우폴리 손 대응, 손가락 수 1~5개 자동(엄지 자동 판별)
+- Rigify 정식 손가락 구조 생성: palm.0N(super_palm) + 손가락 3마디(super_finger), 엄지는 palm.01 아래
+- 패널에 Fingers 토글·감지된 손가락 수 표시, 손가락이 없는 손(벙어리장갑형)은 손 본까지만 생성
+- Unity Humanoid 손가락 이름 매핑(Thumb/Index/Middle/Ring/Little × Proximal/Intermediate/Distal)
+
 ## [0.2.1]
 
 - 애드온 활성화 시 Claude Code CLI·Codex CLI 경로를 자동으로 찾아 Preferences 경로 칸에 채움 (Finder·Dock 으로 실행한 Blender 포함)

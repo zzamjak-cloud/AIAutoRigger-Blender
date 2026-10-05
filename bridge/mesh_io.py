@@ -1,4 +1,6 @@
+import bmesh
 import bpy
+from mathutils import Vector
 
 from ..core.sampling import sample_surface
 
@@ -25,3 +27,28 @@ def surface_points(context, obj, count=SAMPLE_COUNT):
     if not tris:
         raise ValueError("면이 없는 메시입니다.")
     return verts, sample_surface(verts, tris, count, seed=0)
+
+
+def hand_graph(context, obj, wrist, hand_tip, radius_ratio=2.4, edge_ratio=0.03):
+    """손목 주변 메시를 잘라 촘촘히 나눈 (정점, 간선). 로우폴리 손가락도 측지 거리 단면이 생기도록 세분한다."""
+    wrist = Vector(wrist)
+    hand_len = (Vector(hand_tip) - wrist).length
+    depsgraph = context.evaluated_depsgraph_get()
+    bm = bmesh.new()
+    try:
+        bm.from_object(obj, depsgraph)
+        bm.transform(obj.matrix_world)
+        far = [v for v in bm.verts if (v.co - wrist).length > radius_ratio * hand_len]
+        bmesh.ops.delete(bm, geom=far, context="VERTS")
+        target = edge_ratio * hand_len
+        for _ in range(5):
+            long_edges = [e for e in bm.edges if e.calc_length() > target]
+            if not long_edges:
+                break
+            bmesh.ops.subdivide_edges(bm, edges=long_edges, cuts=1, use_grid_fill=True)
+        bm.verts.index_update()
+        verts = [tuple(v.co) for v in bm.verts]
+        edges = [(e.verts[0].index, e.verts[1].index) for e in bm.edges]
+    finally:
+        bm.free()
+    return verts, edges

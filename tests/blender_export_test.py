@@ -97,6 +97,36 @@ scene.frame_set(20)
 h20 = (arm.matrix_world @ arm.pose.bones["LeftHand"].head).copy()
 check((h20 - h1).length > 0.2, f"구운 애니메이션에서 LeftHand 이동 {(h20 - h1).length:.3f}")
 
+# 손가락 캐릭터: Unity 손가락 이름·계층
+sys.path.insert(0, str(ROOT / "tests"))
+bpy.ops.wm.read_homefile(use_empty=True)
+bv, bt, _gt, hv, ht = humanoid.build_from(humanoid.FINGER_VARIANTS["fingers_straight_t"], split_hands=True)
+parts = []
+for name, (v, f), voxel in (("body", (bv, bt), 0.015), ("hands", (hv, ht), 0.004)):
+    me = bpy.data.meshes.new(name)
+    me.from_pydata(v, [], f)
+    o = bpy.data.objects.new(name, me)
+    bpy.context.scene.collection.objects.link(o)
+    bpy.context.view_layer.objects.active = o
+    m = o.modifiers.new("r", "REMESH")
+    m.mode, m.voxel_size = "VOXEL", voxel
+    bpy.ops.object.modifier_apply(modifier=m.name)
+    parts.append(o)
+for o in bpy.context.view_layer.objects:
+    o.select_set(o in parts)
+bpy.context.view_layer.objects.active = parts[0]
+bpy.ops.object.join()
+check(bpy.ops.airig.auto_rig() == {"FINISHED"} and bpy.context.scene.airig.finger_count == 8, "손가락 캐릭터 자동 리깅")
+path = OUT / "biped_fingers_unity.fbx"
+check(bpy.ops.airig.export_fbx(filepath=str(path), naming="UNITY", bake_anim=False) == {"FINISHED"}, "손가락 FBX 내보내기")
+mapping = json.loads(path.with_suffix(".humanoid.json").read_text())
+fingers = [f"{w}{f}{p}" for w in ("Left", "Right") for f in ("Thumb", "Index", "Middle", "Ring")
+           for p in ("Proximal", "Intermediate", "Distal")]
+check(all(f in mapping for f in fingers), "Humanoid JSON 에 손가락 24개")
+arm, mesh = reimport(path)
+check(arm.data.bones["LeftIndexProximal"].parent.name.startswith("DEF-palm"), "LeftIndexProximal → 손바닥 본")
+check("LeftHand" in ancestors(arm.data.bones["LeftThumbDistal"]), "엄지가 LeftHand 계층 아래")
+
 # 4족: Rigify 이름 유지, 단일 루트
 obj, rig = rig_fixture(quadruped, "dog")
 path = OUT / "quadruped.fbx"

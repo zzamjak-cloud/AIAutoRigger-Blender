@@ -41,7 +41,7 @@ jobs:
           export AIRIG_ADDON_ID="$(sed -n 's/^id *= *"\([A-Za-z0-9_]*\)".*/\1/p' blender_manifest.toml)"
           mkdir -p "$BLENDER_USER_RESOURCES/extensions/user_default"
           ln -sfn "$PWD" "$BLENDER_USER_RESOURCES/extensions/user_default/$AIRIG_ADDON_ID"
-          for t in tests/blender_smoke.py tests/blender_rig_test.py tests/blender_export_test.py; do
+          for t in tests/blender_smoke.py tests/blender_rig_test.py tests/blender_finger_test.py tests/blender_export_test.py; do
             "$BLENDER" -b --python-exit-code 1 --python scripts/dev_bootstrap.py --python "$t" -- "$RUNNER_TEMP/out"
           done
           "$BLENDER" -b --python-exit-code 1 --python scripts/dev_bootstrap.py --python scripts/eval_run.py -- --synthetic 4 --out "$RUNNER_TEMP/eval"
