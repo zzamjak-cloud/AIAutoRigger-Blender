@@ -166,10 +166,13 @@ class ClaudeCodeBackend(_Subprocess):
         with tempfile.TemporaryDirectory(prefix="airig_cc_", ignore_cleanup_errors=True) as tmp:
             paths = _write_images(tmp, images)
             listing = "\n".join(f"- {os.path.basename(p)}" for p in paths)
-            text = (
-                f"{system}\n\nFirst use the Read tool to view each image file in the working directory, in order:\n"
-                f"{listing}\n\n{prompt}"
-            )
+            if paths:
+                text = (
+                    f"{system}\n\nFirst use the Read tool to view each image file in the working directory, in order:\n"
+                    f"{listing}\n\n{prompt}"
+                )
+            else:
+                text = f"{system}\n\n{prompt}"
             # 읽기 도구 하나만 허용하고 사용자 설정·MCP·슬래시 명령을 끈다 (--bare 는 API 키 전용이라 쓰지 않는다)
             cmd = [
                 self.exe, "-p", "--output-format", "json", "--json-schema", json.dumps(schema, separators=(",", ":")),
@@ -211,7 +214,7 @@ class CodexBackend(_Subprocess):
             with open(schema_path, "w", encoding="utf-8") as f:
                 json.dump(schema, f)
             names = ", ".join(os.path.basename(p) for p in paths)
-            text = f"{system}\n\nAttached images, in order: {names}.\n\n{prompt}"
+            text = f"{system}\n\nAttached images, in order: {names}.\n\n{prompt}" if paths else f"{system}\n\n{prompt}"
             cmd = [self.exe, "exec"]
             for p in paths:
                 # codex 는 -i 값을 쉼표로 나누므로 작업 폴더 기준 파일 이름만 넘긴다

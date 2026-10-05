@@ -4,3 +4,4 @@ dist/
 .omc/
 .DS_Store
 wheels/
+.claude/scheduled_tasks.lock

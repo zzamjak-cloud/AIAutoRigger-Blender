@@ -50,6 +50,22 @@ class AIRIG_PT_main(bpy.types.Panel):
         if state.rig_name:
             layout.operator("airig.ai_review", icon="VIEWZOOM")
             layout.operator("airig.export_fbx", icon="EXPORT")
+        if state.rig_name and state.detected_type == "BIPED":
+            box = layout.box()
+            box.label(text="애니메이션 루프", icon="ACTION")
+            row = box.row()
+            row.prop(state, "anim_motion", text="")
+            row.prop(state, "anim_style", text="")
+            row.prop(state, "anim_root_motion")
+            box.operator("airig.generate_motion", icon="PLAY")
+            box.prop(state, "anim_prompt", text="")
+            row = box.row()
+            row.prop(state, "anim_review_rounds")
+            row.operator("airig.ai_motion", icon="LIGHT_SUN")
+            if state.anim_action:
+                box.label(text=f"{state.anim_action}: 키 포즈 {state.anim_keys}개")
+            for line in _wrap(state.anim_summary, 48)[:4]:
+                box.label(text=line)
         if state.review_summary or state.proposals:
             box = layout.box()
             box.label(text="AI 검토", icon="INFO")

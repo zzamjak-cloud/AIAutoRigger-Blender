@@ -38,6 +38,22 @@
 - 렌더 이미지(메시 형상)가 선택한 서비스로 전송된다. API 키를 Preferences 에 넣으면 `userpref.blend` 에 평문 저장되므로 공유 PC 에서는 환경 변수를 권장한다.
 - AI 백엔드를 쓸 수 없으면 Auto Rig(휴리스틱)만 사용할 수 있다.
 
+### 애니메이션 루프 (2족)
+
+리그를 만든 뒤 사이드바 **애니메이션 루프** 상자에서 만든다.
+
+| 항목 | 동작 |
+|---|---|
+| **Motion / Style** | Walk·Run·Idle × Normal·Zombie 프리셋 |
+| **Root Motion** | 끄면 제자리 루프(게임 엔진 권장), 켜면 한 주기만큼 전진하며 주기마다 이어진다 |
+| **Generate Loop** | 프리셋으로 바로 생성 (AI 없음) |
+| **프롬프트 + AI Motion** | 예: "좀비가 다리를 절며 걷는 루프". AI 가 걸음 파라미터(보폭·박자·숙임·팔 뻗기·절뚝임 등)를 정하고, **Review Rounds** 만큼 측면·정면 프레임 렌더와 실측값을 보며 보정한다 |
+
+- 키는 매 프레임이 아니라 동작 극점(접지·낮은 자세·교차·높은 자세)에만 들어간다. 커브당 최대 7개, Auto-Clamped 베지어, Cycles 모디파이어로 반복한다. 걷기 32프레임 기준 키 포즈 59개(매 프레임 방식은 352개)라 그래프 에디터에서 손으로 다듬기 쉽다.
+- 발이 땅을 딛는 구간만 선형 보간이라 미끄러지지 않고, 발 굴림은 Rigify `foot_heel_ik` 로 처리해 발끝이 바닥을 뚫지 않는다.
+- 결과는 `<리그>_<동작>_<스타일>` 액션(Fake User)으로 저장된다. 같은 이름으로 다시 만들면 교체되고, NLA 등 다른 곳에서 쓰는 액션은 `_old` 로 보존된다.
+- **Export Game FBX** 가 액션 구간을 그대로 구워 내보내므로 Unity 에서 Loop Time 을 켜고 Humanoid 클립으로 쓴다.
+
 ### Unity 로 내보내기
 
 - metarig(숨겨진 설계도)와 Rigify 컨트롤 리그는 Blender 안에서 애니메이션 작업용이다. 직접 내보내지 말고 **Export Game FBX** 를 쓴다.
@@ -99,6 +115,7 @@ scripts/dev_run.sh --background --python tests/blender_smoke.py     # 등록·�
 scripts/dev_run.sh --background --python tests/blender_rig_test.py  # 2족·4족 자동 리깅, IK 동작, rest 변형 0
 scripts/dev_run.sh --background --python tests/blender_finger_test.py  # 손가락 검출·Rigify 손가락 굽힘 (곧은 손·갈고리 손·벙어리장갑형)
 scripts/dev_run.sh --background --python tests/blender_face_test.py -- dist/face_test  # 턱·눈 리깅, Unity 이름·간소화 내보내기
+scripts/dev_run.sh --background --python tests/blender_motion_test.py -- dist/motion_test  # 루프 이음새·발 고정·체공·FBX 굽기·AI Motion(가짜 CLI)
 scripts/dev_run.sh --background --python tests/blender_ai_test.py   # AI Auto Rig: API(모의 SDK)·Claude Code·Codex(가짜 CLI), 비용 없음
 scripts/dev_run.sh --background --python tests/blender_review_test.py  # AI 검토 라운드·보정안 적용 (가짜 Codex CLI)
 scripts/dev_run.sh --background --python tests/blender_export_test.py -- dist/export_test  # 게임 FBX 재임포트 검증

@@ -40,9 +40,14 @@ def view_specs(obj, facing):
     return specs, max(size)
 
 
-def render_views(context, obj, facing, extra_objects=(), which=None):
-    """(뷰 이름→PNG 바이트, 뷰 이름→OrthoView, 크기). extra_objects 는 변형에 필요한 리그 등."""
+def render_views(context, obj, facing, extra_objects=(), which=None, frame=None, margin=1.0):
+    """(뷰 이름→PNG 바이트, 뷰 이름→OrthoView, 크기). extra_objects 는 변형에 필요한 리그 등.
+
+    frame 을 주면 임시 씬을 그 프레임으로 맞춰 애니메이션 포즈를 렌더한다. margin 은 화면 여유 배율.
+    """
     specs, size = view_specs(obj, facing)
+    if margin != 1.0:
+        specs = [OrthoView(s.name, s.center, s.right, s.up, s.forward, s.scale * margin) for s in specs]
     if which is not None:
         specs = [s for s in specs if s.name in which]
     scene = bpy.data.scenes.new("AIRIG_views")
@@ -56,6 +61,9 @@ def render_views(context, obj, facing, extra_objects=(), which=None):
         scene.collection.objects.link(obj)
         for extra in extra_objects:
             scene.collection.objects.link(extra)
+        if frame is not None:
+            scene.render.fps = context.scene.render.fps
+            scene.frame_set(int(frame))
         try:
             scene.render.engine = "BLENDER_WORKBENCH"
         except TypeError:
