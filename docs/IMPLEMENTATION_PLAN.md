@@ -1,0 +1,124 @@
+# AI Auto Rigger 구현 계획
+
+## 1. 목표와 범위
+
+- **목표**: 스킨되지 않은 캐릭터 메시를 선택하고 버튼 하나를 누르면 스켈레톤 생성, 스키닝, 검증까지 자동으로 진행하는 Blender Extension.
+- **대상**: 사실적·과장된 비율(대두, 짧은 팔다리 등)의 인간형 2족과 4족 동물. 레스트 포즈는 T/A-포즈(2족), 네 발 서기(4족)를 전제한다. 손가락 세부, 얼굴 리그, 날개·꼬리 외 특수 부속은 후순위.
+- **중간 표현**: Rigify 메타리그(human / cat / wolf / horse 등). AI·휴리스틱은 메타리그 본을 메시에 맞추는 일만 한다.
+- **출력**: Rigify 컨트롤 리그(기본). 팔다리는 IK 모드(`IK_FK = 0`)로 생성하고 IK/FK 전환·발 구르기·폴 타깃은 Rigify 기본 기능을 쓴다. 메시는 DEF 본에 자동 웨이트로 바인딩한다. 게임 엔진용 FBX는 컨트롤 리그 애니메이션을 DEF 본으로 구워 내보낸다(2족 Unity Humanoid, 4족 Generic).
+- **IK 품질 조건**: 무릎은 앞(-Y), 팔꿈치는 뒤(+Y)로 미세하게 굽혀 피팅해 Rigify가 IK 극 방향을 올바르게 계산하게 한다.
+- **원칙**: 기하 연산(본 배치, 웨이트 계산)은 결정적 코드로 한다. AI는 판단(랜드마크 위치 추정, 결과 품질 평가, 보정안 제시)만 맡는다. AI가 없어도(오프라인) 휴리스틱 경로로 동작해야 한다.
+
+## 2. 아키텍처
+
+```text
+[UI 패널] ─▶ [파이프라인 오케스트레이터 (코드가 제어하는 워크플로)]
+                │
+                ├─ ① 전처리·메시 분석 ............ core/mesh_analysis.py  (완료)
+                ├─ ①' 체형 분류(2족/4족) ─┬ AI: 렌더 이미지 분류
+                │                          └ 폴백: 높이·길이 비율, 지면 접촉 다리 수
+                ├─ ② 다중 뷰 렌더 ................ core/render_views.py
+                ├─ ③ 랜드마크 추정 ─┬ AI: Landmark Agent (비전 + 구조화 출력)
+                │                  └ 폴백: 단면 분석 휴리스틱
+                ├─ ④ 3D 복원·메시 내부 스냅 ...... core/landmarks.py
+                ├─ ⑤ 메타리그 피팅 ................ 체형별 Rigify 메타리그 본을 랜드마크에 정렬
+                ├─ ⑥ 스키닝 ...................... Blender 자동 웨이트 + 품질 지표
+                └─ ⑦ 검증·보정 루프 ─ AI: Rig Review Agent (비전 + 허용 목록 도구)
+```
+
+### AI 에이전트 구성
+
+| 에이전트 | 입력 | 출력 | 형태 |
+|---|---|---|---|
+| Landmark Agent | 정면·측면·상면 직교 렌더(실루엣/셰이딩), 카메라 스케일 메타데이터, 체형 | 체형 분류 + 뷰별 2D 관절 좌표 JSON(체형별 랜드마크 세트: 2족은 목·어깨·팔꿈치·손목·골반·무릎·발목, 4족은 척추·꼬리·앞/뒷다리 각 관절) + 신뢰도 | 단일 호출, `output_config.format` 구조화 출력 |
+| Rig Review Agent | 테스트 포즈(팔 들기, 무릎 굽힘 등) 렌더, 본 오버레이, 웨이트 지표 | 문제 목록 + 보정 도구 호출 | 도구 사용 루프(최대 N회, 사용자 승인 게이트) |
+
+- Rig Review Agent 도구는 **허용 목록**만 제공한다: `move_joint`, `set_bone_roll`, `smooth_weights(region)`, `rerun_skinning(method)`, `render_pose(pose)`. 임의 Python 실행 도구는 제공하지 않는다.
+- 모든 도구 정의에 `strict: true`. 루프 반복 횟수, 비용 상한을 둔다.
+- 모델 기본값 `claude-opus-5-5`, `thinking: {type: "adaptive"}`, `effort`는 랜드마크 `medium` / 리뷰 `high`부터 측정 후 조정. 스트리밍 + `get_final_message()`. 서버 측 `fallbacks: "default"` 활성화. `stop_reason == "refusal"` 처리.
+- 오케스트레이션은 에이전트 자율 루프가 아니라 **코드가 단계를 제어**한다(오류 회복·재현성·비용 통제가 쉬움). 자율성은 ⑦ 보정 루프에만 국한한다.
+
+### Blender 통합 제약
+
+- API 호출은 백그라운드 스레드에서 실행하고, bpy 데이터 변경은 `bpy.app.timers`로 메인 스레드에서만 수행한다. 모달 연산자로 진행률·취소를 제공한다.
+- Python SDK: 공식 `anthropic` 패키지를 Extension `wheels`로 번들한다(플랫폼별 wheel: macOS arm64/x64, Windows x64, Linux x64; Blender 5.x Python 3.13 기준). wheel 번들이 막히면 그때 대안을 재검토한다.
+- 매니페스트 `[permissions] network`을 선언하고, API 키는 애드온 Preferences(비밀번호 필드) 또는 `ANTHROPIC_API_KEY` 환경 변수로 받는다. 키를 .blend나 로그에 저장하지 않는다.
+- 렌더는 Workbench/EEVEE 직교 카메라 오프스크린으로 수행해 사용자 씬을 오염시키지 않는다(임시 씬 생성 후 정리).
+
+### 개발 시 보조 경로
+
+- 개발·평가 단계에서는 Claude Code + Blender MCP(`execute_blender_code`, `look`)로 파이프라인 중간 결과를 시각 확인하고 프롬프트를 반복 개선한다. 이것은 개발 도구이며 사용자 배포 기능에 포함하지 않는다.
+
+## 3. 단계별 계획
+
+| 단계 | 산출물 | 완료 기준 |
+|---|---|---|
+| **P0 프로젝트 기반** (완료) | 매니페스트, 격리 개발 프로필 실행기 4종, 메시 분석 연산자, 단위·정적·런타임 테스트, 빌드 스크립트 | 격리 Blender에서 등록·분석·해제 smoke 통과, `extension validate` 통과 |
+| **P1 휴리스틱 리깅(AI 없음)** (완료) | 전처리(스케일/회전 적용, 높이 축 보정), 체형 분류 휴리스틱, 단면·골격화 분석으로 관절 추정, human/quadruped 메타리그 피팅, 자동 웨이트, 미가중 정점 검사 | 2족(사실·과장 비율)·4족 기준 메시 각 2종에서 리그 생성·포즈 시 정점 이탈 없음 |
+| **P2 평가 하네스** (완료, 실데이터 수집은 사용자 몫) | 7절 데이터셋 다운로드 스크립트, 리그 제거→재리깅→정답 관절 비교, 비율 변형 합성 세트, 지표(관절 위치 오차 % of 크기, 미가중 정점 비율, 포즈 시 부피 손실), 체형별 점수 | 같은 입력에 대해 재현 가능한 체형별 점수 리포트 |
+| **P3 Landmark Agent** (완료, 실 API 미검증) | 다중 뷰 렌더, Claude 비전 호출(구조화 출력), 2D→3D 삼각측량, 메시 내부 스냅, 휴리스틱 결과와 신뢰도 기반 병합, Preferences·네트워크 권한·wheel 번들 | P2 기준에서 휴리스틱 대비 관절 오차 개선 확인 |
+| **P4 Rig Review Agent** (완료, 실 API 미검증) | 테스트 포즈 렌더, 허용 목록 도구 루프, 변경 미리보기·승인 UI, 실행 취소 지원 | 의도적으로 틀어진 리그를 루프가 기준치 이내로 보정 |
+| **P5 컨트롤 리그·내보내기** (완료) | Rigify Generate 옵션(2족·4족), 컨트롤 리그 애니메이션을 DEF 본으로 굽기, Unity Humanoid(2족)/Generic(4족) 본 이름 매핑, FBX 내보내기 프리셋 | Unity Humanoid 아바타 자동 매핑 성공, 4족 Generic 임포트·재생 확인 |
+| **P6 배포** (로컬 준비 완료, 공개 저장소·릴리스는 승인 대기) | GitHub 저장소 `zzamjak-cloud/AIAutoRigger-Blender`, CI(정적 + Blender smoke), 태그 릴리스 ZIP, Pages `index.json` 원격 저장소 | 별도 인수 프로필에서 원격 설치→업데이트 확인 |
+
+P1·P2를 P3보다 먼저 두는 이유: AI 결과를 비교할 기준선과 측정 도구가 있어야 프롬프트·모델·effort 조정 효과를 판단할 수 있다.
+
+## 4. 모듈 구조(목표)
+
+```text
+__init__.py              등록/해제
+blender_manifest.toml
+properties.py            씬 상태 PropertyGroup
+preferences.py           API 키·모델·effort 설정 (P3)
+core/                    bpy 비의존 알고리즘 (단위 테스트 대상)
+  mesh_analysis.py       (P0)
+  cross_section.py       단면 기반 관절 휴리스틱 (P1)
+  landmarks.py           2D→3D 복원·병합 (P3)
+  skeleton_template.py   인간형 본 정의·이름 매핑 (P1/P5)
+bridge/                  bpy 의존 어댑터 (렌더, Armature 생성, 웨이트)
+agents/                  Claude 호출·프롬프트·도구 정의·스레드 실행기 (P3/P4)
+operators/ ui/
+wheels/                  번들 wheel (P3, 빌드 산출물)
+tests/                   단위·정적·Blender smoke·평가 하네스
+scripts/                 dev_run.{sh,ps1,bat}, dev_bootstrap.py, build.sh
+```
+
+## 5. 위험과 대응
+
+| 위험 | 대응 |
+|---|---|
+| 비전 좌표 정확도 부족 | 렌더에 그리드·스케일 표식 추가, 정면/측면 일관성 검사, 휴리스틱과 병합, 낮은 신뢰도는 사용자 확인 |
+| 자동 웨이트(열 확산) 실패(비다양체·겹친 메시) | 전처리 검사, 실패 시 복셀/데이터 전송 폴백, 실패 정점 리포트 |
+| API 지연·비용 | 단계별 effort 조정, 이미지 해상도 상한, 프롬프트 캐싱, 루프 횟수·토큰 상한 |
+| bpy 스레드 안전성 | 네트워크만 스레드, bpy 접근은 메인 스레드 타이머 |
+| wheel 번들 크기·플랫폼 | 플랫폼별 빌드, CI에서 각 wheel import 검사 |
+| 오프라인·키 없음 | P1 휴리스틱 경로를 항상 유지 |
+
+## 6. 결정 사항
+
+- 대상: 인간형(사실·과장 비율) + 4족 포함.
+- 리그 형식: Rigify 컨트롤 리그(팔다리 IK 기본). Rigify 메타리그를 중간 표현으로 사용.
+- 평가 데이터: 7절 등급 체계.
+
+## 7. 평가 데이터셋
+
+모델 파일은 저장소에 커밋하지 않고 `tests/eval/sources.toml`(출처·라이선스·해시)과 다운로드 스크립트만 관리한다. 각 출처의 라이선스는 스크립트 작성 시 재확인한다.
+
+| 등급 | 출처 | 용도 |
+|---|---|---|
+| A (CC0) | Quaternius 캐릭터·동물 팩, Kenney 캐릭터 | 1차 기준 세트(2족·4족·스타일라이즈드) |
+| A' (CC0, 무리그) | Blender Human Base Meshes | 실제 입력 조건 smoke |
+| B (CC-BY) | Blender Studio 오픈 무비 캐릭터, Sketchfab Rigged+CC-BY | 고품질 리그 비교, 출처 표기 |
+| C (연구용) | RigNet ModelsResource 데이터셋, Objaverse 리깅 서브셋 | 대량 내부 평가 전용, 재배포·상업 사용 금지 |
+| 합성 | A 등급 리그의 본 길이 변형(대두·짧은 팔다리·긴 목) | 과장 비율 평가, 정답 자동 생성 |
+
+- Mixamo는 약관상 재배포 제약이 있어 제외한다.
+- 리포트는 체형(2족 사실/2족 과장/4족)별로 분리 집계한다.
+
+## 8. 구현 메모
+
+- Rigify 는 `addon_utils.enable("rigify", default_set=True)` 로 켜야 register 가 Preferences 조회에 실패하지 않는다.
+- 메타리그 본을 옮긴 뒤 템플릿 Z축 방향으로 roll 을 다시 맞추지 않으면 B-Bone 이 rest 에서 꼬인다.
+- Rigify DEF 계층은 허벅지·어깨가 끊겨 있고 꼬리는 역방향이므로, 게임 FBX 는 메타리그 계층으로 DEF 본을 다시 잇는 별도 아마추어로 내보낸다.
+- 원격 index 에 같은 플랫폼 다중 버전이 있으면 Blender 가 첫 항목을 설치하므로 Pages 에는 최신 릴리스만 둔다.
+- Unity 6000.0.69f1 에서 Humanoid 아바타 유효·필수 본 매핑 일치 확인 (`scripts/unity_avatar_check.sh`).

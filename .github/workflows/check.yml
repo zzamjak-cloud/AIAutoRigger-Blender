@@ -1,0 +1,46 @@
+name: check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  BLENDER_VERSION: "5.2.2"
+  BLENDER_SERIES: "5.2"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: 순수 Python 단위·정적 검사
+        run: python -m unittest discover -s tests -v
+      - name: Blender 설치
+        run: |
+          curl -fsSL "https://download.blender.org/release/Blender${BLENDER_SERIES}/blender-${BLENDER_VERSION}-linux-x64.tar.xz" -o blender.tar.xz
+          mkdir blender && tar -xf blender.tar.xz -C blender --strip-components=1
+          echo "BLENDER=$PWD/blender/blender" >> "$GITHUB_ENV"
+      - name: SDK wheel 준비
+        run: python scripts/fetch_wheels.py
+      - name: Extension 검증·빌드
+        run: |
+          "$BLENDER" --factory-startup --command extension validate .
+          "$BLENDER" --factory-startup --command extension build --split-platforms --source-dir . --output-dir dist
+          for z in dist/*.zip; do "$BLENDER" --factory-startup --command extension validate "$z"; done
+      - name: 격리 프로필 Blender 런타임 검사
+        # dev_run.sh 는 macOS 전용이므로 같은 구성을 Linux 에서 직접 만든다.
+        # 렌더가 필요한 AI·검토 테스트(blender_ai_test, blender_review_test)는 GPU 없는 러너에서 생략한다.
+        run: |
+          export BLENDER_USER_RESOURCES="$RUNNER_TEMP/AIAutoRiggerDev/${BLENDER_SERIES}"
+          export AIRIG_ADDON_ID="$(sed -n 's/^id *= *"\([A-Za-z0-9_]*\)".*/\1/p' blender_manifest.toml)"
+          mkdir -p "$BLENDER_USER_RESOURCES/extensions/user_default"
+          ln -sfn "$PWD" "$BLENDER_USER_RESOURCES/extensions/user_default/$AIRIG_ADDON_ID"
+          for t in tests/blender_smoke.py tests/blender_rig_test.py tests/blender_export_test.py; do
+            "$BLENDER" -b --python-exit-code 1 --python scripts/dev_bootstrap.py --python "$t" -- "$RUNNER_TEMP/out"
+          done
+          "$BLENDER" -b --python-exit-code 1 --python scripts/dev_bootstrap.py --python scripts/eval_run.py -- --synthetic 4 --out "$RUNNER_TEMP/eval"
+          cat "$RUNNER_TEMP/eval/report.md" >> "$GITHUB_STEP_SUMMARY"

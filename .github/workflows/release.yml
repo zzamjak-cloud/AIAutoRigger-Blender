@@ -1,0 +1,45 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+env:
+  BLENDER_VERSION: "5.2.2"
+  BLENDER_SERIES: "5.2"
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: 태그와 매니페스트 버전 일치 확인
+        run: |
+          version="$(sed -n 's/^version *= *"\(.*\)"/\1/p' blender_manifest.toml)"
+          test "v${version}" = "${GITHUB_REF_NAME}" || { echo "태그 ${GITHUB_REF_NAME} != 매니페스트 v${version}"; exit 1; }
+      - name: 단위·정적 검사
+        run: python -m unittest discover -s tests
+      - name: Blender 설치
+        run: |
+          curl -fsSL "https://download.blender.org/release/Blender${BLENDER_SERIES}/blender-${BLENDER_VERSION}-linux-x64.tar.xz" -o blender.tar.xz
+          mkdir blender && tar -xf blender.tar.xz -C blender --strip-components=1
+      - name: 플랫폼별 Extension 빌드
+        run: |
+          python scripts/fetch_wheels.py
+          blender/blender --factory-startup --command extension validate .
+          blender/blender --factory-startup --command extension build --split-platforms --source-dir . --output-dir dist
+          for z in dist/*.zip; do blender/blender --factory-startup --command extension validate "$z"; done
+      - name: GitHub Release 생성
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # CHANGELOG 에서 이 버전 절만 릴리스 노트로 쓴다
+          awk -v v="## [${GITHUB_REF_NAME#v}]" '$0==v{f=1;next} /^## \[/{f=0} f' CHANGELOG.md > notes.md
+          test -s notes.md
+          gh release create "$GITHUB_REF_NAME" dist/*.zip --title "$GITHUB_REF_NAME" --notes-file notes.md --verify-tag

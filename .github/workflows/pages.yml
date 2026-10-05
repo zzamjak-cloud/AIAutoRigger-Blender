@@ -1,0 +1,57 @@
+name: pages
+
+# 릴리스 성공 후 최신 릴리스의 플랫폼별 ZIP 으로 Blender 원격 Extension 저장소(index.json)를 Pages 에 배포한다.
+# 같은 플랫폼에 여러 버전이 있으면 Blender 가 index 의 첫 항목을 설치하므로 최신 버전만 둔다(로컬 재현으로 확인).
+on:
+  workflow_run:
+    workflows: [release]
+    types: [completed]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+env:
+  BLENDER_VERSION: "5.2.2"
+  BLENDER_SERIES: "5.2"
+
+jobs:
+  build:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Blender 설치
+        run: |
+          curl -fsSL "https://download.blender.org/release/Blender${BLENDER_SERIES}/blender-${BLENDER_VERSION}-linux-x64.tar.xz" -o blender.tar.xz
+          mkdir blender && tar -xf blender.tar.xz -C blender --strip-components=1
+      - name: 최신 릴리스 ZIP 수집
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p site
+          tag="$(gh release view -R "$GITHUB_REPOSITORY" --json tagName -q .tagName)"
+          gh release download "$tag" -R "$GITHUB_REPOSITORY" -p "*.zip" -D site
+          ls -la site
+      - name: index.json 생성
+        run: |
+          blender/blender --factory-startup --command extension server-generate --repo-dir=site --html
+          test -s site/index.json
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

@@ -1,0 +1,69 @@
+schema_version = "1.0.0"
+
+id = "ai_auto_rigger"
+version = "0.1.0"
+name = "AI Auto Rigger"
+tagline = "AI agent assisted automatic character rigging"
+maintainer = "zzamjak-cloud"
+type = "add-on"
+website = "https://github.com/zzamjak-cloud/AIAutoRigger-Blender"
+
+tags = ["Rigging", "Animation"]
+
+blender_version_min = "4.2.0"
+
+license = ["SPDX:GPL-3.0-or-later"]
+
+platforms = ["macos-arm64", "macos-x64", "windows-x64", "linux-x64"]
+
+wheels = [
+  "./wheels/annotated_types-0.8.0-py3-none-any.whl",
+  "./wheels/anthropic-1.11.0-py3-none-any.whl",
+  "./wheels/anyio-4.15.1-py3-none-any.whl",
+  "./wheels/docstring_parser-0.18.0-py3-none-any.whl",
+  "./wheels/h11-0.16.0-py3-none-any.whl",
+  "./wheels/httpcore2-2.13.1-py3-none-any.whl",
+  "./wheels/httpx2-2.13.1-py3-none-any.whl",
+  "./wheels/idna-3.20-py3-none-any.whl",
+  "./wheels/jiter-0.17.0-cp311-cp311-macosx_10_12_x86_64.whl",
+  "./wheels/jiter-0.17.0-cp311-cp311-macosx_11_0_arm64.whl",
+  "./wheels/jiter-0.17.0-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl",
+  "./wheels/jiter-0.17.0-cp311-cp311-win_amd64.whl",
+  "./wheels/jiter-0.17.0-cp313-cp313-macosx_10_12_x86_64.whl",
+  "./wheels/jiter-0.17.0-cp313-cp313-macosx_11_0_arm64.whl",
+  "./wheels/jiter-0.17.0-cp313-cp313-manylinux_2_17_x86_64.manylinux2014_x86_64.whl",
+  "./wheels/jiter-0.17.0-cp313-cp313-win_amd64.whl",
+  "./wheels/pydantic-2.13.5-py3-none-any.whl",
+  "./wheels/pydantic_core-2.46.5-cp311-cp311-macosx_10_12_x86_64.whl",
+  "./wheels/pydantic_core-2.46.5-cp311-cp311-macosx_11_0_arm64.whl",
+  "./wheels/pydantic_core-2.46.5-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl",
+  "./wheels/pydantic_core-2.46.5-cp311-cp311-win_amd64.whl",
+  "./wheels/pydantic_core-2.46.5-cp313-cp313-macosx_10_12_x86_64.whl",
+  "./wheels/pydantic_core-2.46.5-cp313-cp313-macosx_11_0_arm64.whl",
+  "./wheels/pydantic_core-2.46.5-cp313-cp313-manylinux_2_17_x86_64.manylinux2014_x86_64.whl",
+  "./wheels/pydantic_core-2.46.5-cp313-cp313-win_amd64.whl",
+  "./wheels/sniffio-1.3.1-py3-none-any.whl",
+  "./wheels/truststore-0.10.4-py3-none-any.whl",
+  "./wheels/typing_extensions-4.16.0-py3-none-any.whl",
+  "./wheels/typing_inspection-0.4.4-py3-none-any.whl",
+]
+
+[permissions]
+network = "Send renders to the Claude API for joint analysis"
+files = "Export rigged characters as FBX files"
+
+[build]
+paths_exclude_pattern = [
+  "__pycache__/",
+  "/.git/",
+  "/.github/",
+  "/.omc/",
+  "/.claude/",
+  "/scripts/",
+  "/tests/",
+  "/docs/",
+  "/dist/",
+  "/build/",
+  "/.gitignore",
+  "*.zip",
+]
