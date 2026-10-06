@@ -51,6 +51,13 @@ HUMANOID_BONES = (
 GAME_TAG = "airig_game"
 
 
+def _segment_distance(p, a, b):
+    """점 p 와 선분 a-b 사이 거리."""
+    ab = b - a
+    t = 0.0 if ab.length_squared == 0.0 else max(0.0, min(1.0, (p - a).dot(ab) / ab.length_squared))
+    return (p - (a + ab * t)).length
+
+
 def _deform_parent_map(rig, metarig):
     """DEF 본 → 내보낼 부모 DEF 본.
 
@@ -75,12 +82,28 @@ def _deform_parent_map(rig, metarig):
             p = p.parent
         return p.name if p else None
 
+    # 메타리그에 없고 디폼 조상도 없는 본 = 사용자가 컨트롤 리그의 컨트롤 본(head 등) 아래에 직접 추가한 본
+    orphans = {n for n in names if (n[4:] if n.startswith("DEF-") else n) not in meta and nearest_deform(bones[n]) is None}
+
+    def driven_deform(b):
+        """조상 컨트롤 본과 겹치는 DEF 본(head 컨트롤 → DEF-spine.006). 없으면 본 머리에서 가장 가까운 DEF 본."""
+        cands = sorted(names - orphans)
+        p = b.parent
+        while p is not None:
+            tol = 0.02 * p.length
+            same = [n for n in cands if (bones[n].head_local - p.head_local).length <= tol]
+            exact = [n for n in same if (bones[n].tail_local - p.tail_local).length <= tol]
+            if exact or same:
+                return (exact or same)[0]
+            p = p.parent
+        return min(cands, key=lambda n: _segment_distance(b.head_local, bones[n].head_local, bones[n].tail_local))
+
     parents = {}
     for name in names:
         b = bones[name]
         base = name[4:] if name.startswith("DEF-") else name
         if base not in meta:
-            parents[name] = nearest_deform(b)
+            parents[name] = driven_deform(b) if name in orphans else nearest_deform(b)
             continue
         mp = meta[base].parent
         while mp is not None and f"DEF-{mp.name}" not in names:

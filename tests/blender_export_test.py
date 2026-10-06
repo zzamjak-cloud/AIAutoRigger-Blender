@@ -102,6 +102,30 @@ scene.frame_set(20)
 h20 = (arm.matrix_world @ arm.pose.bones["LeftHand"].head).copy()
 check((h20 - h1).length > 0.2, f"구운 애니메이션에서 LeftHand 이동 {(h20 - h1).length:.3f}")
 
+# 사용자가 컨트롤 리그의 head 컨트롤 아래에 직접 추가한 디폼 본(디폼 조상 없음)
+obj, rig = rig_fixture(humanoid, "realistic_t")
+bpy.context.view_layer.objects.active = rig
+bpy.ops.object.mode_set(mode="EDIT")
+head = rig.data.edit_bones["head"]
+jaw = rig.data.edit_bones.new("DEF-jaw")
+jaw.head = head.head + Vector((0.0, -0.02, 0.03))
+jaw.tail = jaw.head + Vector((0.0, -0.1, 0.0))
+jaw.parent = head
+jaw.use_deform = True
+extra = rig.data.edit_bones.new("Hat")
+extra.head = head.tail
+extra.tail = head.tail + Vector((0.0, 0.0, 0.05))
+extra.parent = head
+extra.use_deform = True
+bpy.ops.object.mode_set(mode="OBJECT")
+path = OUT / "biped_user_bones.fbx"
+check(bpy.ops.airig.export_fbx(filepath=str(path), naming="UNITY", bake_anim=False) == {"FINISHED"},
+      "컨트롤 본 아래 사용자 디폼 본이 있어도 FBX 내보내기")
+check(json.loads(path.with_suffix(".humanoid.json").read_text(encoding="utf-8")).get("Jaw") == "Jaw", "Jaw 가 Humanoid 매핑에 포함")
+arm, mesh = reimport(path)
+check(arm.data.bones["Jaw"].parent.name == "Head", "사용자 턱 본 → Head")
+check(arm.data.bones["Hat"].parent.name == "Head", "이름 없는 사용자 본도 Head 아래")
+
 # 손가락 캐릭터: Unity 손가락 이름·계층
 sys.path.insert(0, str(ROOT / "tests"))
 bpy.ops.wm.read_homefile(use_empty=True)
