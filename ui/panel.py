@@ -57,6 +57,7 @@ class AIRIG_PT_main(bpy.types.Panel):
             row.prop(state, "anim_motion", text="")
             row.prop(state, "anim_style", text="")
             row.prop(state, "anim_root_motion")
+            box.prop(state, "anim_hand_shape", text="")
             box.operator("airig.generate_motion", icon="PLAY")
             row = box.row(align=True)
             row.prop(state, "anim_library", text="")

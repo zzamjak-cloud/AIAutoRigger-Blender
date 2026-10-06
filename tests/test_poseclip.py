@@ -197,7 +197,7 @@ class AgentClipTest(unittest.TestCase):
         self.assertEqual(set(params["required"]), set(L.GaitParams.__dataclass_fields__))
         self.assertIn("null", params["type"])
         key = s["properties"]["clip"]["properties"]["keys"]["items"]
-        self.assertEqual(set(key["required"]), {"t", "ease", "rest", *P.CONTROLS})
+        self.assertEqual(set(key["required"]), {"t", "ease", "rest", *P.ALL_CONTROLS})
         self.assertEqual(set(key["properties"]["foot_L"]["required"]), set(P.FIELDS["foot_L"]))
         self.assertFalse(key["additionalProperties"])
         self.assertEqual(set(motion_agent.DESCRIPTIONS), set(L.GaitParams.__dataclass_fields__))

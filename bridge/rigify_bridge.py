@@ -243,6 +243,13 @@ def build_metarig(context, kind, joints, name, has_tail=True, facing="-Y", symme
         bpy.ops.object.mode_set(mode="OBJECT")
     for bone_name, rig_type in rig_types.items():
         metarig.pose.bones[bone_name].rigify_type = rig_type
+        if rig_type == "limbs.super_finger":
+            # 손가락 본은 Z 가 손등을 향하게 roll 을 맞췄다. 'automatic' 은 곧은 손가락에서 굽힘 평면이 정해지지
+            # 않아 축이 손가락마다 제각각이 되므로 X 로 고정한다 (master 를 -X 로 돌리면 손바닥 쪽으로 굽는다)
+            try:
+                metarig.pose.bones[bone_name].rigify_parameters.primary_rotation_axis = "X"
+            except (AttributeError, TypeError):
+                pass
     metarig["airig_fingers"] = json.dumps({s: h.to_dict() for s, h in (fingers or {}).items()})
     metarig["airig_face"] = json.dumps(face.to_dict()) if face is not None else ""
     return metarig

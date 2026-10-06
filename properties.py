@@ -70,6 +70,14 @@ class AIRIG_PG_state(bpy.types.PropertyGroup):
     anim_style: bpy.props.EnumProperty(
         name="Style", items=(("NORMAL", "Normal", ""), ("ZOMBIE", "Zombie", "")), default="NORMAL",
     )
+    anim_hand_shape: bpy.props.EnumProperty(
+        name="Hands",
+        description="손가락 모양. Auto 는 동작에 맞춰 고른다 (걷기 힘 뺀 손, 달리기 가볍게 쥔 손, 공격 주먹·무기 쥐기, 좀비 갈퀴 손)",
+        items=(("AUTO", "Hands: Auto", "동작·스타일에 맞춰 고른다"), ("OPEN", "Open", "쭉 편 손"), ("RELAXED", "Relaxed", "힘을 뺀 손"),
+               ("LOOSE_FIST", "Loose Fist", "가볍게 쥔 손"), ("FIST", "Fist", "주먹"), ("GRIP", "Grip", "무기 손잡이를 쥔 손"),
+               ("POINT", "Point", "검지로 가리키기"), ("CLAW", "Claw", "갈퀴 손 (좀비)")),
+        default="AUTO",
+    )
     anim_root_motion: bpy.props.BoolProperty(
         name="Root Motion", description="꺼두면 제자리(게임 엔진 권장), 켜면 앞으로 이동한다 (걷기·달리기·점프만)", default=False,
     )

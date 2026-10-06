@@ -47,6 +47,7 @@
 | **Motion / Style** | 루프: Walk·Run·Idle·Happy / 단발: Jump·Attack·Hit·Death × Normal·Zombie 프리셋 |
 | **Root Motion** | 끄면 제자리(게임 엔진 권장), 켜면 전진한다. 걷기·달리기는 주기마다 이어지고 점프는 체공 중에 한 번 이동한다 |
 | **Generate Motion** | 프리셋으로 바로 생성 (AI 없음) |
+| **Hands** | 손가락 모양. Auto 는 동작에 맞춰 고른다(걷기·대기 힘 뺀 손, 달리기 가볍게 쥔 손, 기쁨 편 손, 맨손 공격 주먹, 무기 공격 손잡이 쥐기, 피격·사망 손가락 펴짐, 좀비 갈퀴 손). Open·Relaxed·Loose Fist·Fist·Grip·Point·Claw 로 고정할 수도 있다 |
 | **Library** | 동작 사전의 포즈 클립으로 바로 생성 (AI 없음). 내장 14종 + 사용자 저장분 |
 | **프롬프트 + AI Motion** | 예: "좀비가 다리를 절며 걷는 루프", "양손 도끼 내려찍기", "손 흔들며 인사", "바닥에 앉기". AI 가 절차 생성기 파라미터(PARAMS) 또는 포즈 시퀀스(CLIP) 중 맞는 쪽으로 설계하고, **Review Rounds** 만큼 측면·정면 프레임 렌더와 실측값을 보며 보정한다 |
 | **Save** | 현재 애니메이션을 포즈 클립으로 바꿔 사용자 사전에 저장한다. 이후 Library 드롭다운과 AI 설계 예시에 나타난다 |
@@ -72,12 +73,14 @@ Attack 은 궤적 `attack_kind`(SWING 휘두르기 · THRUST 찌르기 · SLASH_
 | wave / clap / cheer / dance | 루프 | 손 흔들기, 박수, 환호, 춤 |
 | bow / point / sit_down | 단발 | 인사, 가리키기, 바닥에 앉기(앉은 자세 유지) |
 
-- 포즈 클립은 몸통·골반·가슴·머리·양손·양발의 캐릭터 기준 오프셋과 회전(도)만 쓰는 JSON 이다. 몸통·발은 레스트 기준 다리 길이 비율, 손은 **어깨 기준 팔 길이 비율**이라(|벡터| ≤ 1 이면 닿음) 레스트 자세가 다른 캐릭터에서도 같은 클립이 같은 동작이 된다. 손은 몸통 이동·회전을 따른다. 발 접지 구간 선형, 바닥 관통 방지, 루프 닫기, 키 수 제한(12), 범위 클램프는 코드가 보장하므로 AI 가 값을 잘못 써도 캐릭터가 바닥을 뚫거나 루프가 끊기지 않는다.
+- 손가락은 손 모양(OPEN·RELAXED·LOOSE_FIST·FIST·GRIP·POINT·CLAW, 손가락별 굽힘 0~1)으로 키를 넣는다. Rigify 손가락 마디 컨트롤 세 개를 손바닥 쪽으로 같은 각도씩 돌려 말아 쥐며, 굽힘은 곧은 손가락 기준 절대 각도라 갈고리처럼 굽은 채 모델링된 손도 같은 주먹이 된다. 굽힘 축은 리그에서 직접 재므로 이전 버전으로 만든 리그에도 적용된다. 손가락이 없는 손(벙어리장갑·상자형)은 있는 손가락만 움직인다.
+- 포즈 클립은 몸통·골반·가슴·머리·양손·양발의 캐릭터 기준 오프셋과 회전(도)만 쓰는 JSON 이다. 몸통·발은 레스트 기준 다리 길이 비율, 손은 **어깨 기준 팔 길이 비율**이라(|벡터| ≤ 1 이면 닿음) 레스트 자세가 다른 캐릭터에서도 같은 클립이 같은 동작이 된다. 손은 몸통 이동·회전을 따른다. 키마다 `fingers_L`/`fingers_R` 로 손 모양을 바꿀 수 있다(없으면 RELAXED, 무기는 GRIP 을 끝까지 유지). 발 접지 구간 선형, 바닥 관통 방지, 루프 닫기, 키 수 제한(12), 범위 클램프는 코드가 보장하므로 AI 가 값을 잘못 써도 캐릭터가 바닥을 뚫거나 루프가 끊기지 않는다.
 - 사용자 사전은 Blender 설정 폴더의 `ai_auto_rigger/motions/*.json` 이다. 같은 이름은 사용자 항목이 내장 항목을 덮는다.
 - 무기 메시는 포함하지 않는다. 손 궤적·회전만 만들므로 Unity 에서 손 본에 무기를 붙여 쓴다.
 
 - 키는 매 프레임이 아니라 동작 극점(접지·낮은 자세·교차·높은 자세)에만 들어간다. 커브당 최대 7개, Auto-Clamped 베지어, 루프는 Cycles 모디파이어로 반복한다. 단발 동작은 반복하지 않고 끝 키 값을 유지한다(점프·공격·피격은 레스트로 복귀, 사망은 누운 자세). 걷기 32프레임 기준 키 포즈 59개(매 프레임 방식은 352개)라 그래프 에디터에서 손으로 다듬기 쉽다.
 - 발이 땅을 딛는 구간만 선형 보간이라 미끄러지지 않고, 발 굴림은 Rigify `foot_heel_ik` 로 처리해 발끝이 바닥을 뚫지 않는다.
+- 키를 넣은 뒤 모든 프레임에서 엉덩이 → 발목 거리가 다리 길이를 넘지 않는지 리그로 확인하고, 넘는 프레임(점프 도약 직후 등)은 그 구간의 몸통 키(와 같은 시점의 손 키)를 필요한 만큼 내린다. Rigify IK 스트레치로 다리가 늘어나면 Unity Humanoid 에서는 반영되지 않아 발이 뜨기 때문이다. AI Motion·동작 사전 결과에도 똑같이 적용된다.
 - 결과는 `<리그>_<동작>_<스타일>` 액션(Fake User)으로 저장된다. 같은 이름으로 다시 만들면 교체되고, NLA 등 다른 곳에서 쓰는 액션은 `_old` 로 보존된다.
 - **Export Game FBX** 가 NLA 에 올린 액션(뮤트 포함)과 활성 액션을 각 액션 구간대로 구워 액션 이름의 테이크로 내보내므로 Unity 에서 Humanoid 클립으로 쓴다. 루프 동작은 Loop Time 을 켜고, 단발 동작은 끈다.
 
@@ -143,6 +146,7 @@ scripts/dev_run.sh --background --python tests/blender_rig_test.py  # 2족·4족
 scripts/dev_run.sh --background --python tests/blender_finger_test.py  # 손가락 검출·Rigify 손가락 굽힘 (곧은 손·갈고리 손·벙어리장갑형)
 scripts/dev_run.sh --background --python tests/blender_face_test.py -- dist/face_test  # 턱·눈 리깅, Unity 이름·간소화 내보내기
 scripts/dev_run.sh --background --python tests/blender_motion_test.py -- dist/motion_test  # 루프·단발·공격 궤적·동작 사전·FBX 굽기·AI Motion(가짜 CLI)
+scripts/dev_run.sh --background --python tests/blender_hand_test.py -- dist/hand_test      # 손 모양(주먹·무기 쥐기·갈퀴·가리키기)·갈고리 손·벙어리장갑·FBX 손가락
 scripts/dev_run.sh --background --python tests/blender_ai_test.py   # AI Auto Rig: API(모의 SDK)·Claude Code·Codex(가짜 CLI), 비용 없음
 scripts/dev_run.sh --background --python tests/blender_review_test.py  # AI 검토 라운드·보정안 적용 (가짜 Codex CLI)
 scripts/dev_run.sh --background --python tests/blender_export_test.py -- dist/export_test  # 게임 FBX 재임포트 검증

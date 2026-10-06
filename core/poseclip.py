@@ -17,6 +17,8 @@ AI 가 값을 잘못 써도 캐릭터가 바닥을 뚫거나 루프가 끊기지
 - 손 위치는 어깨 기준 팔 길이 비율이다 (|벡터| ≤ 1 이면 닿는다). 레스트 손 위치가 캐릭터마다 달라도(A-포즈, 팔 내림)
   "fwd 0.9, up 0" 은 언제나 어깨 높이로 뻗은 손이 된다. 몸통이 움직이면 어깨도 함께 움직이므로 몸통 이동이 더해진다.
 - 발은 up == 0 이면 땅에 닿은 것이고, 접지 키 사이는 선형이라 미끄러지지 않는다. 키가 없는 발은 제자리에 고정된다.
+- "fingers_L"/"fingers_R" 는 손 모양 이름(handshape.SHAPES: OPEN, RELAXED, LOOSE_FIST, FIST, GRIP, POINT, CLAW) 또는 null.
+  손가락 키가 하나도 없으면 RELAXED 로 두고, "rest": true 키의 손가락도 RELAXED 다 (쭉 편 레스트 손은 부자연스럽다).
 """
 
 from __future__ import annotations
@@ -26,9 +28,13 @@ import pathlib
 import re
 from dataclasses import dataclass, field
 
+from . import handshape
 from . import locomotion as L
 
 CONTROLS = ("torso", "hips", "chest", "head", "hand_L", "hand_R", "foot_L", "foot_R")
+# 손 모양 컨트롤: 값은 숫자 필드가 아니라 손 모양 이름 하나다
+FINGER_CONTROLS = ("fingers_L", "fingers_R")
+ALL_CONTROLS = CONTROLS + FINGER_CONTROLS
 LOC_FIELDS = ("side", "fwd", "up")
 ROT_FIELDS = ("pitch", "roll", "yaw")
 FIELDS = {
@@ -135,7 +141,7 @@ def _ranges(control: str) -> dict:
 
 
 def empty_key(t: float = 0.0, rest: bool = False, ease: str = L.BEZIER) -> dict:
-    return {"t": t, "ease": ease, "rest": rest, **{c: None for c in CONTROLS}}
+    return {"t": t, "ease": ease, "rest": rest, **{c: None for c in ALL_CONTROLS}}
 
 
 def _num(v, lo, hi, default=0.0) -> float:
@@ -165,6 +171,8 @@ def clamp(data: dict) -> dict:
             if isinstance(v, dict):
                 rng = _ranges(c)
                 key[c] = {f: _num(v.get(f), *rng[f]) for f in FIELDS[c]}
+        for c in FINGER_CONTROLS:
+            key[c] = handshape.normalize(raw.get(c))
         out["keys"].append(key)
     out["keys"].sort(key=lambda k: k["t"])
     # 같은 시점 키는 뒤의 것으로 합친다
@@ -173,7 +181,7 @@ def clamp(data: dict) -> dict:
         if merged and merged[-1]["t"] == key["t"]:
             prev = merged[-1]
             prev["rest"] = prev["rest"] or key["rest"]
-            for c in CONTROLS:
+            for c in ALL_CONTROLS:
                 if key[c] is not None:
                     prev[c] = key[c]
             continue
@@ -300,10 +308,29 @@ def to_motion(p: ClipParams, body: Body) -> L.Motion:
         else:
             finished = _finish(keys, loop)
         channels.append(L.Channel(bone, kind, finished))
+    channels += L.finger_channels(_finger_plan(clip), loop)
     distance = clip["root_distance"] * leg if p.root_motion else 0.0
     if distance > 0.0:
         channels.append(L.Channel("root", "loc", [L.Key(0.0, (0.0, 0.0, 0.0), L.LINEAR), L.Key(1.0, (0.0, distance, 0.0), L.LINEAR)]))
     return L.Motion(p, channels, distance)
+
+
+def _finger_plan(clip: dict) -> dict:
+    """클립 키 → {"L": [(t, 손 모양)], "R": ...}. 키가 없는 손은 RELAXED, rest 키의 손가락도 RELAXED.
+
+    단발 동작이 t=0 이후에 처음 손 모양을 정하면 t=0 은 RELAXED 에서 시작한다.
+    """
+    plan = {}
+    for c in FINGER_CONTROLS:
+        keys = []
+        for key in clip["keys"]:
+            shape = key[c] or (handshape.DEFAULT if key["rest"] else None)
+            if shape is not None:
+                keys.append((key["t"], shape))
+        if not keys or (not clip["loop"] and keys[0][0] > 0.0):
+            keys.insert(0, (0.0, handshape.DEFAULT))
+        plan[c[-1]] = keys
+    return plan
 
 
 def from_motion(m: L.Motion, body: Body, name: str) -> dict:
@@ -318,6 +345,13 @@ def from_motion(m: L.Motion, body: Body, name: str) -> dict:
     by_heel = {v: k for k, v in HEEL_BONES.items()}
     for ch in m.channels:
         if ch.bone == "root":
+            continue
+        if ch.kind == "curl":
+            # 손가락 굽힘은 가장 가까운 손 모양 이름으로 되돌린다
+            control = f"fingers_{ch.bone[-1]}"
+            for k in (ch.keys[:-1] if loop else ch.keys):
+                t = round(k.t % 1.0, 4) if loop else round(min(k.t, 1.0), 4)
+                by_time.setdefault(t, empty_key(t))[control] = handshape.nearest(k.value)
             continue
         control = by_bone.get(ch.bone) or by_heel.get(ch.bone)
         if control is None:
@@ -411,6 +445,9 @@ def compact(clip: dict) -> str:
         for c in CONTROLS:
             if k[c] is not None:
                 item[c] = {f: round(v, 3) if isinstance(v, float) else v for f, v in k[c].items() if v != 0.0}
+        for c in FINGER_CONTROLS:
+            if k[c] is not None:
+                item[c] = k[c]
         keys.append(item)
     data = {"name": clip["name"], "loop": clip["loop"], "frames": clip["frames"], "keys": keys}
     if clip["root_distance"]:

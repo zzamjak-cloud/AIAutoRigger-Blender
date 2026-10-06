@@ -98,6 +98,16 @@ class LocomotionTest(unittest.TestCase):
         hands = channel(m, "hand_ik.L", "loc").keys
         self.assertGreater(min(k.value[2] for k in hands), 0.5 * p.arm_raise * ARM, "팔을 계속 들고 있음")
         self.assertFalse(any(c.bone.startswith("foot_ik") for c in L.generate(L.preset("HAPPY", step_height=0.0), LEG, ARM).channels))
+
+    def test_happy_torso_down_when_feet_land(self):
+        # 발이 닿는 순간 몸통이 레스트보다 높으면 다리가 펴진 길이를 넘는다 (Rigify 레스트 다리는 거의 펴져 있음)
+        for style in ("NORMAL", "ZOMBIE"):
+            m = L.generate(L.preset("HAPPY", style), LEG, ARM)
+            torso = channel(m, "torso", "loc").keys
+            feet = channel(m, "foot_ik.L", "loc").keys
+            for a, b in zip(feet, feet[1:]):
+                if a.value[2] > 0 and b.value[2] == 0:
+                    self.assertLessEqual(L.sample(torso, b.t)[2], 0.0, f"{style}: t={b.t} 착지 때 몸통 높이")
         self.assertFalse(L.clamp({"motion": "HAPPY", "root_motion": True}).root_motion)
 
     def test_sample_holds_clip_end(self):

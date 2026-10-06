@@ -74,7 +74,9 @@ class AIRIG_OT_generate_motion(bpy.types.Operator):
         state = context.scene.airig
         try:
             rig, _mesh, facing = _targets(context)
-            params = locomotion.preset(state.anim_motion, state.anim_style, root_motion=state.anim_root_motion)
+            # Auto 면 프리셋 손 모양(좀비는 갈퀴 손)을 그대로 쓴다
+            hands = {} if state.anim_hand_shape == "AUTO" else {"hand_shape": state.anim_hand_shape}
+            params = locomotion.preset(state.anim_motion, state.anim_style, root_motion=state.anim_root_motion, **hands)
             action = _apply(context, rig, facing, params, state.anim_style.lower())
         except (ValueError, RuntimeError, KeyError) as exc:
             self.report({"ERROR"}, str(exc))
@@ -208,8 +210,9 @@ class AIRIG_OT_ai_motion(bpy.types.Operator):
         self.params = None
         self.summary = ""
         leg, arm = animate.measure(self.rig)
-        # UI 의 동작·스타일을 AI 기준값으로 준다
-        base = locomotion.preset(state.anim_motion, state.anim_style, root_motion=state.anim_root_motion)
+        # UI 의 동작·스타일·손 모양을 AI 기준값으로 준다
+        hands = {} if state.anim_hand_shape == "AUTO" else {"hand_shape": state.anim_hand_shape}
+        base = locomotion.preset(state.anim_motion, state.anim_style, root_motion=state.anim_root_motion, **hands)
         backend, prompt, hint, fps = self.backend, self.prompt, state.anim_motion, context.scene.render.fps
         self.action_name = None
         self.library = library()

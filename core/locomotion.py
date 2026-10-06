@@ -15,6 +15,8 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field, fields
 from math import cos, pi
 
+from . import handshape
+
 MOTIONS = ("WALK", "RUN", "IDLE", "HAPPY", "JUMP", "ATTACK", "HIT", "DEATH")
 LOOPING = frozenset({"WALK", "RUN", "IDLE", "HAPPY"})  # 나머지는 단발 동작
 ROOT_MOTION_OK = frozenset({"WALK", "RUN", "JUMP"})  # 전진이 의미 있는 동작
@@ -57,6 +59,7 @@ class GaitParams:
     attack_kind: str = "SWING"  # 공격 궤적: SWING 가로 휘두르기 | THRUST 찌르기 | SLASH_H 가로 베기 | SLASH_V 세로 베기 | OVERHEAD 내려찍기
     two_handed: bool = False  # 양손으로 쥐고 공격 (반대 손이 방어 대신 함께 움직임)
     fall_dir: str = "BACK"  # 사망 시 쓰러지는 방향 "BACK" | "FRONT"
+    hand_shape: str = "AUTO"  # 손 모양: AUTO(동작에 맞춰 고름) 또는 handshape.SHAPES 이름 하나로 고정 (좀비는 CLAW)
     root_motion: bool = False
 
     @property
@@ -132,6 +135,11 @@ PRESETS = {
 }
 
 
+for (_m, _style), _values in PRESETS.items():
+    if _style == "ZOMBIE":
+        _values.setdefault("hand_shape", "CLAW")
+
+
 def preset(motion: str, style: str = "NORMAL", **overrides) -> GaitParams:
     values = {"motion": motion, **PRESETS.get((motion, style), {}), **overrides}
     return clamp(values)
@@ -155,6 +163,8 @@ def clamp(values: dict) -> GaitParams:
             out[f.name] = v if v in ("BACK", "FRONT") else "BACK"
         elif f.name == "attack_kind":
             out[f.name] = v if v in ATTACK_KINDS else "SWING"
+        elif f.name == "hand_shape":
+            out[f.name] = handshape.normalize(v) or "AUTO"
         elif f.name in ("root_motion", "two_handed"):
             out[f.name] = bool(v)
         elif f.name in RANGES and isinstance(v, (int, float)) and not isinstance(v, bool):
@@ -256,9 +266,60 @@ def _foot_keys(p: GaitParams, leg: float, phase: float, limp: float) -> tuple[li
 
 
 def generate(p: GaitParams, leg: float, arm: float) -> Motion:
-    """키 포즈 채널. 반환 위치 오프셋은 m, 회전은 도."""
+    """키 포즈 채널. 반환 위치 오프셋은 m, 회전은 도. 손가락은 fingers.L/R 채널(손가락별 굽힘 0~1)."""
     builder = _BUILDERS.get(p.motion, _gait)
-    return builder(p, leg, arm)
+    m = builder(p, leg, arm)
+    m.channels += finger_channels(_finger_plan(p), p.loop)
+    return m
+
+
+def finger_channels(plan: dict, loop: bool) -> list[Channel]:
+    """{"L": [(t, 손 모양), ...], ...} → fingers.L/R "curl" 채널. 루프는 닫고 단발은 끝 모양을 유지한다."""
+    out = []
+    for side, keys in plan.items():
+        ks = [Key(t, handshape.curls(shape)) for t, shape in keys]
+        out.append(Channel(f"fingers.{side}", "curl", _close(ks) if loop else _hold(ks)))
+    return out
+
+
+def _finger_plan(p: GaitParams) -> dict:
+    """동작별 손 모양 시점표. hand_shape 가 AUTO 가 아니면 그 모양으로 고정한다."""
+
+    def both(keys):
+        return {"L": keys, "R": keys}
+
+    if p.hand_shape != "AUTO":
+        return both([(0.0, p.hand_shape)])
+    a = p.anticipation
+    if p.motion == "RUN":
+        return both([(0.0, "LOOSE_FIST")])
+    if p.motion == "HAPPY":
+        return both([(0.0, "OPEN")])
+    if p.motion == "JUMP":
+        # _jump 과 같은 시점: 웅크리며 쥐었다가 최고점에서 펴고 착지하며 푼다
+        launch = a + 0.06
+        land = min(0.85, launch + 0.32)
+        return both([(0.0, "RELAXED"), (a, "LOOSE_FIST"), (0.5 * (launch + land), "OPEN"), (land, "RELAXED")])
+    if p.motion == "ATTACK":
+        strike = min(0.8, a + 0.15)
+        follow = min(0.9, strike + 0.12)
+        recover = min(0.95, follow + 0.2)
+        if p.attack_kind == "SWING":
+            hand = [(0.0, "RELAXED"), (a, "FIST"), (follow, "FIST"), (recover, "RELAXED")]
+        else:
+            hand = [(0.0, "GRIP")]  # 무기는 처음부터 끝까지 쥐고 있어야 떨어뜨리지 않는다
+        other = hand if p.two_handed else [(0.0, "RELAXED"), (a, "LOOSE_FIST"), (follow, "LOOSE_FIST"), (recover, "RELAXED")]
+        return {p.attack_side: hand, ("L" if p.attack_side == "R" else "R"): other}
+    if p.motion == "HIT":
+        # _hit 과 같은 시점: 충격에 손가락이 펴졌다가 돌아온다
+        recover = min(0.8, min(0.6, a + 0.1) + 0.25)
+        return both([(0.0, "RELAXED"), (a, "OPEN"), (recover, "RELAXED")])
+    if p.motion == "DEATH":
+        # _death 과 같은 시점: 쓰러지며 허우적대는 손이 펴지고, 누운 뒤 힘이 빠진다
+        tip = min(0.6, a + 0.25)
+        settle = min(0.95, min(0.85, min(0.75, tip + 0.17) + 0.08) + 0.12)
+        return both([(0.0, "RELAXED"), (tip, "OPEN"), (settle, "RELAXED")])
+    return both([(0.0, "RELAXED")])  # 걷기·대기
 
 
 def _idle(p: GaitParams, leg: float, arm: float) -> Motion:
@@ -354,8 +415,10 @@ def _happy(p: GaitParams, leg: float, arm: float) -> Motion:
     """기쁨 루프: 두 팔을 들고 흔들며 두 번 깡충 뛴다. 손은 몸통을 따라간다."""
     hop = p.step_height * leg
     b, sw, c = p.bounce * leg, p.sway * leg, p.crouch * leg
-    torso_loc = _close([Key(0.0, (0.0, 0.0, -c)), Key(0.15, (sw, 0.0, -c - b)), Key(0.3, (0.0, 0.0, hop)),
-                        Key(0.5, (0.0, 0.0, -c)), Key(0.65, (-sw, 0.0, -c - b)), Key(0.8, (0.0, 0.0, hop))])
+    # 착지(발이 닿는 0.38)에 몸통도 레스트 아래로 내려와 있어야 다리가 펴진 길이를 넘지 않는다.
+    # 그래서 착지 흡수 키를 0.4 에 두고, 다음 웅크림(0.65)까지 이어서 낮춘다
+    torso_loc = _close([Key(0.15, (sw, 0.0, -c - b)), Key(0.3, (0.0, 0.0, hop)), Key(0.4, (0.0, 0.0, -c)),
+                        Key(0.65, (-sw, 0.0, -c - b)), Key(0.8, (0.0, 0.0, hop)), Key(0.9, (0.0, 0.0, -c))])
     torso_rot = _close([Key(0.0, (p.lean_deg, 0.0, 0.0)), Key(0.3, (p.lean_deg - 3.0, 0.0, 0.0)),
                         Key(0.5, (p.lean_deg, 0.0, 0.0)), Key(0.8, (p.lean_deg - 3.0, 0.0, 0.0))])
     hips = _close([Key(0.0, (0.0, 0.0, p.hip_yaw_deg)), Key(0.5, (0.0, 0.0, -p.hip_yaw_deg))])

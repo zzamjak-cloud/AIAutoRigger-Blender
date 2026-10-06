@@ -98,6 +98,8 @@ for motion in locomotion.MOTIONS:
         points = [kp for fc in curves for kp in fc.keyframe_points]
         per_curve = max(len(fc.keyframe_points) for fc in curves)
         check(per_curve <= 9, f"{motion}/{style}: 커브당 키 {per_curve}개 (매 프레임 {n}개 대비)")
+        reach = max(animate.leg_reach(bpy.context, rig, range(1, n + 2)).values())
+        check(reach <= animate.REACH_LIMIT + 0.002, f"{motion}/{style}: 발이 다리 길이 안 (최대 {reach:.3f})")
         check(all(kp.handle_left_type == "AUTO_CLAMPED" for kp in points), f"{motion}/{style}: Auto-Clamped 베지어 핸들")
         lowest = min(mesh_min_z(f) for f in range(1, n + 2, max(1, n // 8)))
         # 쓰러지는 동안은 IK 무릎이 잠깐 바닥에 스치는 것을 허용한다
@@ -165,6 +167,8 @@ for kind in locomotion.ATTACK_KINDS:
     check(max(v.length for v in path) > 0.25, f"ATTACK/{kind}: 오른손 이동 {100 * max(v.length for v in path):.0f}cm")
     lowest = min(mesh_min_z(f) for f in range(1, n + 2, max(1, n // 8)))
     check(lowest > -0.03, f"ATTACK/{kind}: 바닥 관통 없음 (최저 {lowest:.3f}m)")
+    reach = max(animate.leg_reach(bpy.context, rig, range(1, n + 2)).values())
+    check(reach <= animate.REACH_LIMIT + 0.002, f"ATTACK/{kind}: 발이 다리 길이 안 (최대 {reach:.3f})")
     if two:
         l0 = world("hand_ik.L", 1)
         gap = [(world("hand_ik.L", f) - l0 - (world("hand_ik.R", f) - h0)).length for f in range(1, n + 2)]
@@ -183,6 +187,8 @@ for name in ("punch", "axe_overhead_2h", "wave", "sit_down", "dance", "kick"):
     check(max(len(fc.keyframe_points) for fc in curves) <= poseclip.MAX_KEYS + 2, f"사전 {name}: 커브당 키 수")
     lowest = min(mesh_min_z(f) for f in range(1, n + 2, max(1, n // 8)))
     check(lowest > -0.03, f"사전 {name}: 바닥 관통 없음 (최저 {lowest:.3f}m)")
+    reach = max(animate.leg_reach(bpy.context, rig, range(1, n + 2)).values())
+    check(reach <= animate.REACH_LIMIT + 0.002, f"사전 {name}: 발이 다리 길이 안 (최대 {reach:.3f})")
     if loop:
         a, b = pose_at(1), pose_at(1 + n)
         check(max_diff(a, b) < 1e-4 and action.use_cyclic, f"사전 {name}: 루프 이음새")

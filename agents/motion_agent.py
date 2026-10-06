@@ -9,9 +9,9 @@ AI 는 키를 직접 찍지 않는다. 두 가지 중 하나를 고른다.
 from __future__ import annotations
 
 try:
-    from ..core import locomotion, poseclip
+    from ..core import handshape, locomotion, poseclip
 except ImportError:  # 단위 테스트에서 애드온 패키지 밖(core 최상위)으로 불러올 때
-    from core import locomotion, poseclip
+    from core import handshape, locomotion, poseclip
 
 DESCRIPTIONS = {
     "motion": "WALK, RUN, IDLE, HAPPY (loops) or JUMP, ATTACK, HIT, DEATH (one-shot clips)",
@@ -44,6 +44,10 @@ DESCRIPTIONS = {
                    "wind-up, horizontal cut), SLASH_V (overhead to front, vertical cut), OVERHEAD (heavy chop down to the ground)",
     "two_handed": "ATTACK: true when the weapon is held with both hands (the other hand follows the grip instead of guarding)",
     "fall_dir": "DEATH: BACK (falls on the back) or FRONT (falls face down)",
+    "hand_shape": "finger pose of both hands: AUTO picks per motion for a normal human (walk/idle relaxed, run loose fist, "
+                  "happy open, attack fist or weapon grip, hit/death fingers flung open); or force one shape for the whole "
+                  "motion: OPEN, RELAXED, LOOSE_FIST, FIST, GRIP (holding a weapon handle), POINT, CLAW. Zombies and "
+                  "monsters use CLAW. Keep the base value unless the request implies other hands",
     "root_motion": "true to move forward in the scene (WALK, RUN, JUMP only), false for in-place (game engines usually want false)",
 }
 
@@ -52,7 +56,7 @@ MOTION_NOTES = ("PARAMS motions: WALK, RUN, IDLE and HAPPY (arms up, pumping, sm
                 "recover), HIT (recoil back, arms flung out, recover) and DEATH (knees buckle, fall BACK or FRONT, lie still) "
                 "are one-shot clips that play once. Each parameter description says which motions use it; the others ignore it.")
 
-CLIP_SPEC = """CLIP format (pose sequence): {"name": "snake_case id", "loop": bool, "frames": int, "root_distance": number, "keys": [key, ...]} with at most 12 keys. Each key: {"t": 0..1 fraction of the clip, "ease": "BEZIER" or "LINEAR" (to the next key), "rest": true to put every control at the rest pose at that time, and one entry per control: "torso", "hips", "chest", "head", "hand_L", "hand_R", "foot_L", "foot_R", each either null (no key for that control at this time) or an object. Axes are character-relative: side>0 = character's left, fwd>0 = in front, up>0 = higher. Rotations pitch/roll/yaw are degrees: pitch>0 bends forward (for a hand: tilts the held weapon tip down), roll>0 tilts to the character's right, yaw>0 turns to the left. torso has side/fwd/up (offsets from the rest pose in leg lengths) plus pitch/roll/yaw; hips/chest/head have only rotations, relative to their parent. hand_L/hand_R positions are the hand's offset FROM ITS OWN SHOULDER in arm lengths, so they are independent of the character's rest pose and a vector longer than 1 cannot be reached: a hand hanging down is about (0, 0, -0.95); a straight punch at shoulder height is (0, 0.95, 0); a guard in front of the chest is (toward the body center 0.15, 0.45, -0.15); raised straight overhead is (0, 0.1, 0.95); a wind-up behind the shoulder is (outward 0.4, -0.3, 0.3). "Toward the body center" is side>0 for hand_R and side<0 for hand_L; hands meeting in front of the chest use about 0.2 each. foot_L/foot_R have side/fwd/up (leg lengths, from the rest pose) and pitch/roll/yaw/heel (heel>0 lifts the heel for a toe roll); up==0 means planted, and planted feet never slide. A control with no key at all stays at rest. Make attacks read clearly: a wind-up that moves the hand far from the strike point, a fast strike (the key before it may use "ease": "LINEAR"), a follow-through past the target, then recovery; add torso yaw/pitch and a forward lunge (torso fwd 0.1-0.25) so the whole body commits. Loops must not include t=1 (the generator closes them); one-shot clips start at t=0 and hold their last key, so end with "rest": true unless the pose should stay (sitting, lying). Controls omitted from a key are null."""
+CLIP_SPEC = """CLIP format (pose sequence): {"name": "snake_case id", "loop": bool, "frames": int, "root_distance": number, "keys": [key, ...]} with at most 12 keys. Each key: {"t": 0..1 fraction of the clip, "ease": "BEZIER" or "LINEAR" (to the next key), "rest": true to put every control at the rest pose at that time, and one entry per control: "torso", "hips", "chest", "head", "hand_L", "hand_R", "foot_L", "foot_R", each either null (no key for that control at this time) or an object. Axes are character-relative: side>0 = character's left, fwd>0 = in front, up>0 = higher. Rotations pitch/roll/yaw are degrees: pitch>0 bends forward (for a hand: tilts the held weapon tip down), roll>0 tilts to the character's right, yaw>0 turns to the left. torso has side/fwd/up (offsets from the rest pose in leg lengths) plus pitch/roll/yaw; hips/chest/head have only rotations, relative to their parent. hand_L/hand_R positions are the hand's offset FROM ITS OWN SHOULDER in arm lengths, so they are independent of the character's rest pose and a vector longer than 1 cannot be reached: a hand hanging down is about (0, 0, -0.95); a straight punch at shoulder height is (0, 0.95, 0); a guard in front of the chest is (toward the body center 0.15, 0.45, -0.15); raised straight overhead is (0, 0.1, 0.95); a wind-up behind the shoulder is (outward 0.4, -0.3, 0.3). "Toward the body center" is side>0 for hand_R and side<0 for hand_L; hands meeting in front of the chest use about 0.2 each. foot_L/foot_R have side/fwd/up (leg lengths, from the rest pose) and pitch/roll/yaw/heel (heel>0 lifts the heel for a toe roll); up==0 means planted, and planted feet never slide. A control with no key at all stays at rest. "fingers_L"/"fingers_R" set the finger pose of that hand from that key on (null = no change): OPEN (flat, waving, clapping, surprise), RELAXED (default, also used by rest keys), LOOSE_FIST (running, ready stance), FIST (punch, block), GRIP (holding a sword/axe/dagger handle; keep it for the whole clip so the weapon is never dropped), POINT (index finger out), CLAW (zombie); a punch makes a FIST on the wind-up key and relaxes on recovery, a wave uses OPEN. Make attacks read clearly: a wind-up that moves the hand far from the strike point, a fast strike (the key before it may use "ease": "LINEAR"), a follow-through past the target, then recovery; add torso yaw/pitch and a forward lunge (torso fwd 0.1-0.25) so the whole body commits. Loops must not include t=1 (the generator closes them); one-shot clips start at t=0 and hold their last key, so end with "rest": true unless the pose should stay (sitting, lying). Controls omitted from a key are null."""
 
 SYSTEM = ("You design character animation clips for a game. You never key bones directly: you either set parameters of a "
           "procedural generator (PARAMS mode) or write a short pose sequence in a constrained pose language (CLIP mode). "
@@ -88,6 +92,8 @@ def params_schema() -> dict:
             props[name] = {"type": "string", "enum": list(locomotion.ATTACK_KINDS)}
         elif name == "fall_dir":
             props[name] = {"type": "string", "enum": ["BACK", "FRONT"]}
+        elif name == "hand_shape":
+            props[name] = {"type": "string", "enum": ["AUTO", *handshape.SHAPES]}
         elif name in ("root_motion", "two_handed"):
             props[name] = {"type": "boolean"}
         elif name == "cycle_frames":
@@ -105,6 +111,8 @@ def clip_schema() -> dict:
     key_props = {"t": _num(), "ease": {"type": "string", "enum": [locomotion.BEZIER, locomotion.LINEAR]}, "rest": {"type": "boolean"}}
     for c in poseclip.CONTROLS:
         key_props[c] = control(poseclip.FIELDS[c])
+    for c in poseclip.FINGER_CONTROLS:
+        key_props[c] = {"type": ["string", "null"], "enum": [*handshape.SHAPES, None]}
     key = {"type": "object", "properties": key_props, "required": list(key_props), "additionalProperties": False}
     props = {"name": {"type": "string"}, "loop": {"type": "boolean"}, "frames": {"type": "integer"},
              "root_distance": _num(), "keys": {"type": "array", "items": key}}
