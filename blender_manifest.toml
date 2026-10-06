@@ -1,7 +1,7 @@
 schema_version = "1.0.0"
 
 id = "ai_auto_rigger"
-version = "0.7.2"
+version = "0.7.3"
 name = "AI Auto Rigger"
 tagline = "AI agent assisted automatic character rigging"
 maintainer = "zzamjak-cloud"

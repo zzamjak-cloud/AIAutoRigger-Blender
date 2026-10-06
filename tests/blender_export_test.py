@@ -82,7 +82,12 @@ arm, mesh = reimport(path)
 bones = arm.data.bones
 roots = [b.name for b in bones if b.parent is None]
 check(roots == ["Hips"], f"루트 본은 Hips 하나 {roots}")
-check(bones["LeftLowerLeg"].parent.name == "LeftUpperLegTwist", "트위스트 분절 체인 유지")
+# Unity 는 Humanoid 본 사이에 낀 본이 회전하면 오류를 내므로 트위스트는 곁가지로 둔다
+check(bones["LeftLowerLeg"].parent.name == "LeftUpperLeg", "LowerLeg → UpperLeg (트위스트 우회)")
+check(bones["LeftFoot"].parent.name == "LeftLowerLeg", "Foot → LowerLeg (트위스트 우회)")
+check(bones["LeftHand"].parent.name == "LeftLowerArm", "Hand → LowerArm (트위스트 우회)")
+check(bones["LeftUpperLegTwist"].parent.name == "LeftUpperLeg" and not bones["LeftUpperLegTwist"].children,
+      "트위스트 본은 Humanoid 본의 곁가지")
 for name in ("LeftUpperLeg", "RightUpperLeg", "LeftUpperArm", "Head"):
     check("Hips" in ancestors(bones[name]), f"{name} 이 Hips 계층 아래")
 check("LeftShoulder" in ancestors(bones["LeftUpperArm"]), "LeftUpperArm → LeftShoulder 부모")
@@ -124,7 +129,9 @@ fingers = [f"{w}{f}{p}" for w in ("Left", "Right") for f in ("Thumb", "Index", "
            for p in ("Proximal", "Intermediate", "Distal")]
 check(all(f in mapping for f in fingers), "Humanoid JSON 에 손가락 24개")
 arm, mesh = reimport(path)
-check(arm.data.bones["LeftIndexProximal"].parent.name.startswith("LeftPalm"), "LeftIndexProximal → 손바닥 본(LeftPalmN)")
+check(arm.data.bones["LeftIndexProximal"].parent.name == "LeftHand", "LeftIndexProximal → LeftHand (손바닥 우회)")
+check(arm.data.bones["LeftIndexIntermediate"].parent.name == "LeftIndexProximal", "손가락 마디 트위스트 우회")
+check(any(n.startswith("LeftPalm") for n in arm.data.bones.keys()), "손바닥 본은 곁가지로 남음")
 check("LeftHand" in ancestors(arm.data.bones["LeftThumbDistal"]), "엄지가 LeftHand 계층 아래")
 
 # 4족: Rigify 이름 유지, 단일 루트

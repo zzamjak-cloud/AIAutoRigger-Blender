@@ -129,6 +129,8 @@ def build_game_armature(context, rig, metarig, mesh, naming="RIGIFY", simplify=F
     kept_parents = {n: (survivor(p) if p else None) for n, p in parents.items() if n not in merged}
     parents = kept_parents
     rename = UNITY_BIPED if naming == "UNITY" else {}
+    if naming == "UNITY":
+        parents = _bypass_inbetween(parents, rename)
     data = bpy.data.armatures.new(f"{rig.name}_game")
     game = bpy.data.objects.new(f"{rig.name}_game", data)
     game[GAME_TAG] = True
@@ -178,6 +180,23 @@ def build_game_armature(context, rig, metarig, mesh, naming="RIGIFY", simplify=F
         if vg.name in rename:
             vg.name = rename[vg.name]
     return game, copy
+
+
+def _bypass_inbetween(parents, rename):
+    """Humanoid 본이 비매핑 본(트위스트 분절·손바닥)을 거쳐 붙어 있으면 가장 가까운 Humanoid 조상에 바로 붙인다.
+
+    Unity 는 Humanoid 본 사이에 낀(inbetween) 본이 애니메이션에서 회전하면 "Avatar Rig Configuration mis-match"
+    오류를 낸다. 트위스트 본은 무릎·발목 비틀림을 따라 돌므로 체인에서 빼 부모 Humanoid 본의 곁가지로 남긴다.
+    """
+    human = {n for n in parents if rename.get(n) in HUMANOID_BONES}
+    out = dict(parents)
+    for name in human:
+        p = parents[name]
+        while p is not None and p not in human:
+            p = parents[p]
+        if p is not None:
+            out[name] = p
+    return out
 
 
 def _merge_weights(mesh_obj, merge_into):

@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.7.3]
+
+- **Unity "Avatar Rig Configuration mis-match" 리그 오류 수정**: Unity 이름으로 내보낼 때 트위스트 분절·손바닥 본이 Humanoid 본 사이(UpperLeg → UpperLegTwist → LowerLeg 등)에 끼어 애니메이션에서 회전하던 문제. 이제 Humanoid 본은 가장 가까운 Humanoid 조상에 바로 붙고, 트위스트·손바닥 본은 웨이트를 유지한 채 곁가지로 남는다 (Rigify DEF 이름 내보내기는 그대로)
+- Unity 아바타 검사(`scripts/unity_avatar_check.sh`)가 임포트 중 리그 오류도 실패로 잡는다
+
 ## [0.7.2]
 
 - **Export Game FBX 가 NLA 액션을 모두 내보냄**: 이전에는 활성 액션 하나만 "Scene" 테이크로 나갔다. 이제 리그 NLA 스트립의 액션(뮤트된 트랙·스트립 포함)과 활성 액션을 액션마다 게임 아마추어에 구워 **액션 이름의 테이크**로 각각 담는다. Unity 에서 클립이 액션 이름으로 나뉘어 보인다
