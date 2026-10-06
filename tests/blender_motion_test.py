@@ -1,4 +1,4 @@
-"""애니메이션 통합 테스트: 루프(걷기·달리기·대기·기쁨) 이음새·발 고정, 단발(점프·공격·피격·사망) 구조, FBX 굽기, AI Motion(가짜 Codex CLI).
+"""애니메이션 통합 테스트: 루프·단발 구조, 공격 궤적, 동작 사전(포즈 클립) 생성·저장, FBX 굽기, AI Motion(가짜 Codex CLI, 파라미터·클립 응답).
 
 실행: scripts/dev_run.sh --background --python tests/blender_motion_test.py -- <출력 폴더>
 """
@@ -19,6 +19,10 @@ PKG = f"bl_ext.user_default.{os.environ['AIRIG_ADDON_ID']}"
 OUT = pathlib.Path(sys.argv[sys.argv.index("--") + 1]) if "--" in sys.argv else ROOT / "dist" / "motion_test"
 animate = __import__(f"{PKG}.bridge.animate", fromlist=["x"])
 locomotion = __import__(f"{PKG}.core.locomotion", fromlist=["x"])
+poseclip = __import__(f"{PKG}.core.poseclip", fromlist=["x"])
+# 사용자 동작 사전은 임시 폴더에 둔다 (실제 설정 폴더를 건드리지 않음)
+LIB_DIR = pathlib.Path(tempfile.mkdtemp(prefix="airig_lib_test_"))
+os.environ["AIRIG_LIBRARY_DIR"] = str(LIB_DIR)
 
 
 def check(cond, msg):
@@ -145,6 +149,71 @@ for motion in locomotion.MOTIONS:
             head_end = world("head", 1 + n).z
             check(head_end < 0.6 * rest_spine_z, f"DEATH/{style}: 머리도 누움 ({100 * head_end:.0f}cm)")
 
+# 공격 궤적: 찌르기는 옆 이동이 작고, 양손 내려찍기는 두 손이 함께 움직인다
+for kind in locomotion.ATTACK_KINDS:
+    two = kind == "OVERHEAD"
+    st.anim_motion, st.anim_style, st.anim_root_motion = "ATTACK", "NORMAL", False
+    check(bpy.ops.airig.generate_motion() == {"FINISHED"}, f"ATTACK/{kind}: 기본 생성")
+    import importlib
+    ops = importlib.import_module(f"{PKG}.operators.animate")
+    params = locomotion.preset("ATTACK", attack_kind=kind, two_handed=two)
+    ops._apply(bpy.context, rig, bpy.data.objects[st.metarig_name].get("airig_facing", "-Y"), params, kind.lower())
+    action = bpy.data.actions[st.anim_action]
+    n = int(action.frame_end - action.frame_start)
+    h0 = world("hand_ik.R", 1)
+    path = [world("hand_ik.R", f) - h0 for f in range(1, n + 2)]
+    check(max(v.length for v in path) > 0.25, f"ATTACK/{kind}: 오른손 이동 {100 * max(v.length for v in path):.0f}cm")
+    lowest = min(mesh_min_z(f) for f in range(1, n + 2, max(1, n // 8)))
+    check(lowest > -0.03, f"ATTACK/{kind}: 바닥 관통 없음 (최저 {lowest:.3f}m)")
+    if two:
+        l0 = world("hand_ik.L", 1)
+        gap = [(world("hand_ik.L", f) - l0 - (world("hand_ik.R", f) - h0)).length for f in range(1, n + 2)]
+        check(max(gap) < 0.5, f"ATTACK/{kind} 양손: 두 손 오프셋 차이 최대 {100 * max(gap):.0f}cm")
+
+# 동작 사전: 내장 클립 생성 (단발은 끝 자세 유지·루프는 닫힘), 발 고정, 바닥 관통 없음
+library = poseclip.load_library(str(LIB_DIR))
+check(len(library) >= 14, f"내장 사전 {len(library)}개")
+for name in ("punch", "axe_overhead_2h", "wave", "sit_down", "dance", "kick"):
+    st.anim_library = name
+    check(bpy.ops.airig.generate_library_motion() == {"FINISHED"}, f"사전 {name}: 생성")
+    action = bpy.data.actions[st.anim_action]
+    n = int(action.frame_end - action.frame_start)
+    loop = json.loads(action["airig_motion"])["clip"]["loop"]
+    curves = animate.fcurves(rig)
+    check(max(len(fc.keyframe_points) for fc in curves) <= poseclip.MAX_KEYS + 2, f"사전 {name}: 커브당 키 수")
+    lowest = min(mesh_min_z(f) for f in range(1, n + 2, max(1, n // 8)))
+    check(lowest > -0.03, f"사전 {name}: 바닥 관통 없음 (최저 {lowest:.3f}m)")
+    if loop:
+        a, b = pose_at(1), pose_at(1 + n)
+        check(max_diff(a, b) < 1e-4 and action.use_cyclic, f"사전 {name}: 루프 이음새")
+    else:
+        a, b = pose_at(1 + n), pose_at(1 + 2 * n)
+        check(max_diff(a, b) < 1e-4 and not action.use_cyclic, f"사전 {name}: 끝 자세 유지")
+    if name in ("punch", "wave", "dance"):
+        moved = max((world("DEF-toe.L", f) - world("DEF-toe.L", 1)).length for f in range(1, n + 1, 3))
+        check(moved < 1e-4, f"사전 {name}: 발 고정")
+    if name == "sit_down":
+        check(world("DEF-spine", 1 + n).z < 0.4 * rest_spine_z, f"사전 sit_down: 앉은 높이 {100 * world('DEF-spine', 1 + n).z:.0f}cm")
+    if name == "kick":
+        lift = max(world("foot_ik.R", f).z for f in range(1, n + 2)) - rest_foot_z
+        check(lift > 0.2, f"사전 kick: 오른발 {100 * lift:.0f}cm 들림")
+    if name == "axe_overhead_2h":
+        top = max(world("hand_ik.R", f).z for f in range(1, n + 2))
+        check(top > rest_spine_z + 0.4, f"사전 axe_overhead_2h: 손이 {100 * (top - rest_spine_z):.0f}cm 올라감")
+
+# 사전 저장: 걷기 프리셋을 클립으로 바꿔 사용자 사전에 넣고 다시 생성한다
+st.anim_motion, st.anim_style, st.anim_root_motion = "WALK", "ZOMBIE", False
+bpy.ops.airig.generate_motion()
+st.anim_library_name, st.anim_library_desc = "my zombie walk", "saved from preset"
+check(bpy.ops.airig.save_motion_library() == {"FINISHED"}, "사전 저장")
+check((LIB_DIR / "my_zombie_walk.json").exists(), "사용자 사전 파일 생성")
+check(st.anim_library == "my_zombie_walk" and any(e.name == "my_zombie_walk" for e in poseclip.load_library(str(LIB_DIR))), "저장한 항목이 사전에 보임")
+check(bpy.ops.airig.generate_library_motion() == {"FINISHED"}, "저장한 클립으로 다시 생성")
+saved_action = bpy.data.actions[st.anim_action]
+sn = int(saved_action.frame_end - saved_action.frame_start)
+check(saved_action.use_cyclic and max_diff(pose_at(1), pose_at(1 + sn)) < 1e-4, "저장한 걷기 클립도 루프가 닫힘")
+check(min(mesh_min_z(f) for f in range(1, sn + 1, max(1, sn // 8))) > -0.03, "저장한 걷기 클립: 바닥 관통 없음")
+
 # 전진 점프: 도약 전에는 제자리, 착지 후 한 번만 전진하고 멈춘다
 st.anim_motion, st.anim_style, st.anim_root_motion = "JUMP", "NORMAL", True
 check(bpy.ops.airig.generate_motion() == {"FINISHED"}, "전진 점프 생성")
@@ -236,11 +305,30 @@ if NO_RENDER:
     raise SystemExit(0)
 check(len(calls) == 2, f"AI 호출 2회 (설계 + 검토) {len(calls)}")
 check("좀비가 다리를 절며 걷는 루프" in calls[0]["prompt"] and calls[0]["images"] == [], "1회차: 프롬프트만 전달")
-check("Measured from the generated loop" in calls[1]["prompt"] and "cm" in calls[1]["prompt"], "2회차: 실측값 전달")
+check("Measured from the generated clip" in calls[1]["prompt"] and "cm" in calls[1]["prompt"], "2회차: 실측값 전달")
 check(len(calls[1]["images"]) == 6 and calls[1]["images"][0].startswith("side_t000"), f"2회차: 프레임 렌더 6장 {calls[1]['images']}")
 action = bpy.data.actions[st.anim_action]
 applied = json.loads(action["airig_motion"])
 check(action.name.endswith("_ai") or "_ai" in action.name, f"AI 액션 이름 {action.name}")
 check(applied["cycle_frames"] == 40 and abs(applied["arm_forward"] - 0.8) < 1e-6, "검토 보정 파라미터 반영")
 check("raised the arms" in st.anim_summary, "요약 저장")
+check("Motion library" in calls[0]["prompt"] and "axe_overhead_2h" in calls[0]["prompt"], "AI 프롬프트에 동작 사전 포함")
+
+# AI Motion 이 CLIP 모드로 응답하면 포즈 클립으로 생성된다
+punch = next(e.clip for e in poseclip.load_library(str(LIB_DIR)) if e.name == "punch")
+mine = json.loads(json.dumps(punch)); mine["name"] = "ai_punch"; mine["frames"] = 22
+(tmp / "responses.json").write_text(json.dumps([
+    {"mode": "CLIP", "params": None, "clip": mine, "done": True, "summary": "adapted the punch clip"},
+]))
+(tmp / "log.jsonl").write_text("")
+st.anim_prompt = "빠른 오른손 펀치"
+st.anim_review_rounds = 1
+check(bpy.ops.airig.ai_motion() == {"FINISHED"}, "AI Motion(CLIP) 실행")
+calls = [json.loads(line) for line in (tmp / "log.jsonl").read_text().splitlines()]
+check(len(calls) == 2, f"CLIP: 설계 + 검토 호출 {len(calls)}회")
+check(len(calls[1]["images"]) == 7 and calls[1]["images"][4].startswith("side_t100"), f"CLIP 검토: 끝 자세 포함 7장 {calls[1]['images']}")
+check("Current clip" in calls[1]["prompt"], "CLIP 검토 프롬프트에 현재 클립")
+applied = json.loads(bpy.data.actions[st.anim_action]["airig_motion"])
+check(applied["motion"] == "CLIP" and applied["cycle_frames"] == 22 and "ai_punch" in st.anim_action, f"CLIP 액션 {st.anim_action}")
+check("adapted the punch" in st.anim_summary, "CLIP 요약 저장")
 print("[motion] ALL PASSED")

@@ -1,5 +1,6 @@
-"""애니메이션 생성(루프·단발): 프리셋(AI 없음)과 AI Motion(프롬프트 → 파라미터 → 프레임 렌더 검토 라운드)."""
+"""애니메이션 생성: 프리셋(AI 없음), 동작 사전(포즈 클립), AI Motion(프롬프트 → 파라미터/클립 → 프레임 렌더 검토 라운드)."""
 
+import os
 import threading
 
 import bpy
@@ -7,7 +8,7 @@ import bpy
 from .. import preferences
 from ..agents import backends, motion_agent
 from ..bridge import animate, views
-from ..core import locomotion
+from ..core import locomotion, poseclip
 
 POLL_INTERVAL = 0.25
 REVIEW_TIMES = (0.0, 0.25, 0.5, 0.75)
@@ -25,11 +26,27 @@ def _targets(context):
     return rig, mesh, metarig.get("airig_facing", "-Y")
 
 
+def library_dir():
+    """사용자 동작 사전 폴더. 테스트는 AIRIG_LIBRARY_DIR 로 바꾼다."""
+    return os.environ.get("AIRIG_LIBRARY_DIR") or bpy.utils.user_resource("CONFIG", path="ai_auto_rigger/motions", create=True)
+
+
+def library():
+    return poseclip.load_library(library_dir())
+
+
+def build(params, leg, arm):
+    """GaitParams 또는 ClipParams → Motion."""
+    if isinstance(params, poseclip.ClipParams):
+        return poseclip.to_motion(params, leg, arm)
+    return locomotion.generate(params, leg, arm)
+
+
 def _apply(context, rig, facing, params, label, name=None):
     leg, arm = animate.measure(rig)
-    motion = locomotion.generate(params, leg, arm)
+    motion = build(params, leg, arm)
     context.scene.airig.anim_facts = locomotion.facts(motion, context.scene.render.fps)
-    name = name or f"{rig.name}_{params.motion.lower()}_{label}"
+    name = name or f"{rig.name}_{params.name}_{label}"
     action = animate.apply_motion(context, rig, motion, name, facing)
     state = context.scene.airig
     state.anim_action = action.name
@@ -63,9 +80,81 @@ class AIRIG_OT_generate_motion(bpy.types.Operator):
             self.report({"ERROR"}, str(exc))
             return {"CANCELLED"}
         state.anim_summary = ""
-        kind = "루프" if locomotion.is_loop(params.motion) else "단발 동작"
+        kind = "루프" if params.loop else "단발 동작"
         self.report({"INFO"}, f"{kind} 생성: {action.name} ({params.cycle_frames}프레임, 키 포즈 {state.anim_keys}개)")
         return {"FINISHED"}
+
+
+class AIRIG_OT_generate_library_motion(bpy.types.Operator):
+    """동작 사전에서 고른 포즈 클립(펀치·베기·손 흔들기 등)으로 애니메이션을 만든다 (AI 없음)"""
+
+    bl_idname = "airig.generate_library_motion"
+    bl_label = "Generate from Library"
+    bl_options = {"REGISTER", "UNDO"}
+
+    @classmethod
+    def poll(cls, context):
+        return _poll(context) and bool(context.scene.airig.anim_library)
+
+    def execute(self, context):
+        state = context.scene.airig
+        try:
+            rig, _mesh, facing = _targets(context)
+            entry = next((e for e in library() if e.name == state.anim_library), None)
+            if entry is None:
+                raise RuntimeError(f"사전에 '{state.anim_library}' 항목이 없습니다.")
+            params = poseclip.ClipParams(entry.clip, root_motion=state.anim_root_motion)
+            action = _apply(context, rig, facing, params, "lib")
+        except (ValueError, RuntimeError, KeyError) as exc:
+            self.report({"ERROR"}, str(exc))
+            return {"CANCELLED"}
+        state.anim_summary = entry.description
+        kind = "루프" if params.loop else "단발 동작"
+        self.report({"INFO"}, f"{kind} 생성: {action.name} ({params.cycle_frames}프레임, 키 포즈 {state.anim_keys}개)")
+        return {"FINISHED"}
+
+
+class AIRIG_OT_save_motion_library(bpy.types.Operator):
+    """현재 생성한 애니메이션을 포즈 클립으로 바꿔 사용자 동작 사전에 저장한다 (AI 가 다음 설계 때 참고한다)"""
+
+    bl_idname = "airig.save_motion_library"
+    bl_label = "Save to Library"
+
+    @classmethod
+    def poll(cls, context):
+        state = context.scene.airig
+        return bool(state.rig_name) and bool(state.anim_action) and bool(state.anim_library_name.strip())
+
+    def execute(self, context):
+        state = context.scene.airig
+        action = bpy.data.actions.get(state.anim_action)
+        if action is None or "airig_motion" not in action:
+            self.report({"ERROR"}, "저장할 생성 애니메이션이 없습니다. 먼저 동작을 만드세요.")
+            return {"CANCELLED"}
+        try:
+            rig, _mesh, _facing = _targets(context)
+            params = params_from_action(action)
+            leg, arm = animate.measure(rig)
+            clip = params.clip if isinstance(params, poseclip.ClipParams) else poseclip.from_motion(build(params, leg, arm), leg, arm, "x")
+            clip = dict(clip, name=state.anim_library_name.strip())
+            entry = poseclip.Entry(poseclip.clamp(clip)["name"], state.anim_library_desc.strip() or state.anim_prompt.strip(), poseclip.clamp(clip))
+            path = poseclip.save_entry(library_dir(), entry)
+        except (ValueError, RuntimeError, KeyError, OSError) as exc:
+            self.report({"ERROR"}, str(exc))
+            return {"CANCELLED"}
+        state.anim_library = entry.name
+        self.report({"INFO"}, f"사전에 저장: {entry.name} ({path})")
+        return {"FINISHED"}
+
+
+def params_from_action(action):
+    """액션에 기록한 생성 파라미터 → GaitParams 또는 ClipParams."""
+    import json
+
+    data = json.loads(action["airig_motion"])
+    if data.get("motion") == "CLIP":
+        return poseclip.ClipParams(poseclip.clamp(data["clip"]), root_motion=bool(data.get("root_motion")))
+    return locomotion.clamp(data)
 
 
 def render_review(context, rig, mesh, facing, n, loop=True):
@@ -123,7 +212,9 @@ class AIRIG_OT_ai_motion(bpy.types.Operator):
         base = locomotion.preset(state.anim_motion, state.anim_style, root_motion=state.anim_root_motion)
         backend, prompt, hint, fps = self.backend, self.prompt, state.anim_motion, context.scene.render.fps
         self.action_name = None
-        self._start(lambda: motion_agent.ask_params(backend, prompt, hint, leg, arm, base, fps))
+        self.library = library()
+        lib = self.library
+        self._start(lambda: motion_agent.ask_params(backend, prompt, hint, leg, arm, base, fps, lib))
         if bpy.app.background or context.window is None:
             while True:
                 self._thread.join()
@@ -177,9 +268,9 @@ class AIRIG_OT_ai_motion(bpy.types.Operator):
         if (self.rounds_left <= 0) or (done and not changed):
             return self._finish(context)
         self.rounds_left -= 1
-        images = render_review(context, self.rig, self.mesh, self.facing, params.cycle_frames, locomotion.is_loop(params.motion))
-        backend, prompt, measured = self.backend, self.prompt, context.scene.airig.anim_facts
-        self._start(lambda: motion_agent.ask_review(backend, prompt, params, images, measured))
+        images = render_review(context, self.rig, self.mesh, self.facing, params.cycle_frames, params.loop)
+        backend, prompt, measured, lib = self.backend, self.prompt, context.scene.airig.anim_facts, self.library
+        self._start(lambda: motion_agent.ask_review(backend, prompt, params, images, measured, lib))
         return "CONTINUE"
 
     def _finish(self, context):
@@ -209,4 +300,4 @@ class AIRIG_OT_ai_motion(bpy.types.Operator):
             context.workspace.status_text_set(None)
 
 
-classes = (AIRIG_OT_generate_motion, AIRIG_OT_ai_motion)
+classes = (AIRIG_OT_generate_motion, AIRIG_OT_generate_library_motion, AIRIG_OT_save_motion_library, AIRIG_OT_ai_motion)

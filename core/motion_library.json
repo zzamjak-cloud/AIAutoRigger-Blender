@@ -1,0 +1,88 @@
+[
+ {"description": "Straight right punch from a boxing guard; left hand stays up guarding",
+  "clip": {"name": "punch", "loop": false, "frames": 20, "keys": [
+   {"t": 0.0, "rest": true},
+   {"t": 0.25, "torso": {"up": -0.04, "yaw": -15}, "hand_L": {"side": -0.35, "fwd": 0.45, "up": 0.45}, "hand_R": {"side": 0.35, "fwd": 0.4, "up": 0.45}},
+   {"t": 0.45, "torso": {"fwd": 0.1, "up": -0.05, "pitch": 8, "yaw": 15}, "chest": {"yaw": -10}, "hand_L": {"side": -0.35, "fwd": 0.45, "up": 0.45}, "hand_R": {"side": 0.3, "fwd": 0.95, "up": 0.5}},
+   {"t": 0.62, "torso": {"up": -0.04, "yaw": -5}, "hand_L": {"side": -0.35, "fwd": 0.45, "up": 0.45}, "hand_R": {"side": 0.35, "fwd": 0.4, "up": 0.45}},
+   {"t": 1.0, "rest": true}]}},
+ {"description": "Quick low dagger stab with the right hand, body crouched and twisted",
+  "clip": {"name": "dagger_stab", "loop": false, "frames": 18, "keys": [
+   {"t": 0.0, "rest": true},
+   {"t": 0.3, "torso": {"up": -0.08, "pitch": 10, "yaw": -20}, "hand_R": {"side": 0.2, "fwd": -0.2, "up": 0.1}, "hand_L": {"side": -0.3, "fwd": 0.3, "up": 0.3}},
+   {"t": 0.5, "torso": {"fwd": 0.2, "up": -0.1, "pitch": 18, "yaw": 10}, "hand_R": {"side": 0.25, "fwd": 0.9, "up": 0.1}, "hand_L": {"side": -0.3, "fwd": 0.3, "up": 0.3}, "head": {"pitch": 8}},
+   {"t": 0.62, "torso": {"fwd": 0.2, "up": -0.1, "pitch": 18, "yaw": 10}, "hand_R": {"side": 0.25, "fwd": 0.85, "up": 0.1}},
+   {"t": 1.0, "rest": true}]}},
+ {"description": "One-handed sword slash: raised wind-up on the right, horizontal cut across the chest, follow-through low on the left",
+  "clip": {"name": "sword_slash", "loop": false, "frames": 26, "keys": [
+   {"t": 0.0, "rest": true},
+   {"t": 0.35, "torso": {"up": -0.04, "yaw": -25}, "head": {"yaw": 25}, "hand_R": {"side": -0.2, "fwd": -0.2, "up": 0.7, "roll": -40}, "hand_L": {"side": -0.3, "fwd": 0.3, "up": 0.3}},
+   {"t": 0.5, "torso": {"fwd": 0.15, "up": -0.06, "pitch": 12, "yaw": 25}, "head": {"yaw": -20}, "hand_R": {"side": 0.5, "fwd": 0.85, "up": 0.35, "yaw": 30}, "hand_L": {"side": -0.3, "fwd": 0.3, "up": 0.3}},
+   {"t": 0.62, "torso": {"fwd": 0.15, "up": -0.06, "pitch": 12, "yaw": 35}, "head": {"yaw": -25}, "hand_R": {"side": 0.75, "fwd": 0.4, "up": 0.15, "yaw": 60}},
+   {"t": 1.0, "rest": true}]}},
+ {"description": "One-handed sword thrust: blade pulled back beside the hip, then a straight lunge forward",
+  "clip": {"name": "sword_thrust", "loop": false, "frames": 24, "keys": [
+   {"t": 0.0, "rest": true},
+   {"t": 0.35, "torso": {"up": -0.05, "yaw": -20}, "hand_R": {"side": 0.1, "fwd": -0.3, "up": 0.2, "yaw": -15}, "hand_L": {"side": -0.3, "fwd": 0.3, "up": 0.3}},
+   {"t": 0.5, "torso": {"fwd": 0.25, "up": -0.08, "pitch": 12, "yaw": 15}, "hand_R": {"side": 0.3, "fwd": 1.0, "up": 0.3}, "hand_L": {"side": -0.3, "fwd": 0.2, "up": 0.3}},
+   {"t": 0.62, "torso": {"fwd": 0.25, "up": -0.08, "pitch": 12, "yaw": 15}, "hand_R": {"side": 0.3, "fwd": 1.0, "up": 0.3}},
+   {"t": 1.0, "rest": true}]}},
+ {"description": "Two-handed axe overhead chop: both hands raised above the head, then a heavy strike down to the ground",
+  "clip": {"name": "axe_overhead_2h", "loop": false, "frames": 32, "keys": [
+   {"t": 0.0, "rest": true},
+   {"t": 0.4, "torso": {"up": -0.03, "pitch": -10}, "head": {"pitch": -10}, "hand_R": {"side": 0.35, "fwd": -0.15, "up": 1.0, "pitch": -70}, "hand_L": {"side": -0.35, "fwd": -0.15, "up": 0.95, "pitch": -70}},
+   {"t": 0.55, "torso": {"fwd": 0.15, "up": -0.15, "pitch": 30}, "head": {"pitch": 10}, "hand_R": {"side": 0.3, "fwd": 0.9, "up": -0.1, "pitch": 50}, "hand_L": {"side": -0.3, "fwd": 0.85, "up": -0.15, "pitch": 50}},
+   {"t": 0.7, "torso": {"fwd": 0.15, "up": -0.2, "pitch": 35}, "head": {"pitch": 15}, "hand_R": {"side": 0.3, "fwd": 0.7, "up": -0.45, "pitch": 85}, "hand_L": {"side": -0.3, "fwd": 0.65, "up": -0.5, "pitch": 85}},
+   {"t": 1.0, "rest": true}]}},
+ {"description": "Right high kick: chamber the knee, snap the foot forward, retract",
+  "clip": {"name": "kick", "loop": false, "frames": 24, "keys": [
+   {"t": 0.0, "rest": true},
+   {"t": 0.3, "torso": {"up": -0.05, "pitch": -10, "yaw": 10}, "foot_R": {"fwd": 0.2, "up": 0.45}, "hand_L": {"side": -0.3, "fwd": 0.4, "up": 0.4}, "hand_R": {"side": 0.3, "fwd": 0.3, "up": 0.4}},
+   {"t": 0.5, "torso": {"fwd": 0.05, "up": -0.08, "pitch": -20, "yaw": 15}, "foot_R": {"fwd": 0.75, "up": 0.55, "pitch": 30}, "hand_L": {"side": -0.3, "fwd": 0.4, "up": 0.4}, "hand_R": {"side": 0.3, "fwd": 0.2, "up": 0.4}},
+   {"t": 0.7, "torso": {"up": -0.05, "pitch": -8, "yaw": 8}, "foot_R": {"fwd": 0.2, "up": 0.35}},
+   {"t": 1.0, "rest": true}]}},
+ {"description": "Defensive block: both forearms raised and crossed in front of the face, body braced low, then relax",
+  "clip": {"name": "block", "loop": false, "frames": 24, "keys": [
+   {"t": 0.0, "rest": true},
+   {"t": 0.3, "torso": {"up": -0.08, "pitch": 12}, "head": {"pitch": 10}, "hand_R": {"side": 0.45, "fwd": 0.5, "up": 0.6}, "hand_L": {"side": -0.45, "fwd": 0.5, "up": 0.6}},
+   {"t": 0.7, "torso": {"up": -0.08, "pitch": 12}, "head": {"pitch": 10}, "hand_R": {"side": 0.45, "fwd": 0.5, "up": 0.6}, "hand_L": {"side": -0.45, "fwd": 0.5, "up": 0.6}},
+   {"t": 1.0, "rest": true}]}},
+ {"description": "Friendly wave: right hand raised beside the head, swinging side to side (loop)",
+  "clip": {"name": "wave", "loop": true, "frames": 48, "keys": [
+   {"t": 0.0, "torso": {"side": 0.01}, "head": {"roll": 4}, "hand_R": {"side": 0.0, "fwd": 0.25, "up": 1.0, "yaw": -20}},
+   {"t": 0.25, "torso": {"side": 0.0}, "head": {"roll": 0}, "hand_R": {"side": 0.35, "fwd": 0.25, "up": 1.0, "yaw": 20}},
+   {"t": 0.5, "torso": {"side": -0.01}, "head": {"roll": -4}, "hand_R": {"side": 0.0, "fwd": 0.25, "up": 1.0, "yaw": -20}},
+   {"t": 0.75, "torso": {"side": 0.0}, "head": {"roll": 0}, "hand_R": {"side": 0.35, "fwd": 0.25, "up": 1.0, "yaw": 20}}]}},
+ {"description": "Polite bow: bend forward from the hips with the arms hanging, hold, straighten up",
+  "clip": {"name": "bow", "loop": false, "frames": 40, "keys": [
+   {"t": 0.0, "rest": true},
+   {"t": 0.35, "torso": {"up": -0.05, "pitch": 40}, "head": {"pitch": 10}, "hand_R": {"side": 0.05, "fwd": 0.3, "up": -0.25}, "hand_L": {"side": -0.05, "fwd": 0.3, "up": -0.25}},
+   {"t": 0.6, "torso": {"up": -0.05, "pitch": 40}, "head": {"pitch": 10}, "hand_R": {"side": 0.05, "fwd": 0.3, "up": -0.25}, "hand_L": {"side": -0.05, "fwd": 0.3, "up": -0.25}},
+   {"t": 1.0, "rest": true}]}},
+ {"description": "Clapping in front of the chest, one clap per cycle (loop)",
+  "clip": {"name": "clap", "loop": true, "frames": 24, "keys": [
+   {"t": 0.0, "torso": {"up": -0.01}, "hand_R": {"side": 0.4, "fwd": 0.55, "up": 0.5}, "hand_L": {"side": -0.4, "fwd": 0.55, "up": 0.5}},
+   {"t": 0.5, "torso": {"up": 0.0}, "head": {"pitch": 3}, "hand_R": {"side": 0.65, "fwd": 0.55, "up": 0.5}, "hand_L": {"side": -0.65, "fwd": 0.55, "up": 0.5}}]}},
+ {"description": "Point forward with the right hand at shoulder height and hold",
+  "clip": {"name": "point", "loop": false, "frames": 30, "keys": [
+   {"t": 0.0, "rest": true},
+   {"t": 0.3, "torso": {"yaw": 10}, "head": {"yaw": -5}, "hand_R": {"side": 0.2, "fwd": 0.9, "up": 0.55}},
+   {"t": 0.7, "torso": {"yaw": 10}, "head": {"yaw": -5}, "hand_R": {"side": 0.2, "fwd": 0.9, "up": 0.55}},
+   {"t": 1.0, "rest": true}]}},
+ {"description": "Sit down on the ground: squat, then settle with the legs stretched forward and hands on the knees (ends seated)",
+  "clip": {"name": "sit_down", "loop": false, "frames": 36, "keys": [
+   {"t": 0.0, "rest": true},
+   {"t": 0.3, "torso": {"up": -0.3, "pitch": 15}, "hand_R": {"side": 0.1, "fwd": 0.3, "up": -0.1}, "hand_L": {"side": -0.1, "fwd": 0.3, "up": -0.1}},
+   {"t": 0.6, "torso": {"fwd": -0.15, "up": -0.85, "pitch": 10}, "foot_L": {"fwd": 0.55, "up": 0.05, "pitch": -30}, "foot_R": {"fwd": 0.55, "up": 0.05, "pitch": -30}, "hand_R": {"side": 0.1, "fwd": 0.4, "up": -0.5}, "hand_L": {"side": -0.1, "fwd": 0.4, "up": -0.5}},
+   {"t": 0.78, "torso": {"fwd": -0.15, "up": -0.88, "pitch": 8}, "foot_L": {"fwd": 0.55, "up": 0.05, "pitch": -30}, "foot_R": {"fwd": 0.55, "up": 0.05, "pitch": -30}, "hand_R": {"side": 0.1, "fwd": 0.4, "up": -0.52}, "hand_L": {"side": -0.1, "fwd": 0.4, "up": -0.52}}]}},
+ {"description": "Casual dance: hips swaying side to side, body bouncing, arms alternating up (loop)",
+  "clip": {"name": "dance", "loop": true, "frames": 48, "keys": [
+   {"t": 0.0, "torso": {"side": 0.05, "up": -0.03, "roll": -5}, "hips": {"yaw": 10}, "chest": {"yaw": -8}, "head": {"roll": 8}, "hand_R": {"side": 0.2, "fwd": 0.3, "up": 0.9}, "hand_L": {"side": -0.2, "fwd": 0.3, "up": 0.2}},
+   {"t": 0.25, "torso": {"side": 0.0, "up": 0.0, "roll": 0}, "hips": {"yaw": 0}, "chest": {"yaw": 0}, "head": {"roll": 0}, "hand_R": {"side": 0.2, "fwd": 0.3, "up": 0.55}, "hand_L": {"side": -0.2, "fwd": 0.3, "up": 0.55}},
+   {"t": 0.5, "torso": {"side": -0.05, "up": -0.03, "roll": 5}, "hips": {"yaw": -10}, "chest": {"yaw": 8}, "head": {"roll": -8}, "hand_R": {"side": 0.2, "fwd": 0.3, "up": 0.2}, "hand_L": {"side": -0.2, "fwd": 0.3, "up": 0.9}},
+   {"t": 0.75, "torso": {"side": 0.0, "up": 0.0, "roll": 0}, "hips": {"yaw": 0}, "chest": {"yaw": 0}, "head": {"roll": 0}, "hand_R": {"side": 0.2, "fwd": 0.3, "up": 0.55}, "hand_L": {"side": -0.2, "fwd": 0.3, "up": 0.55}}]}},
+ {"description": "Cheering with both arms raised and pumping, looking up (loop)",
+  "clip": {"name": "cheer", "loop": true, "frames": 32, "keys": [
+   {"t": 0.0, "torso": {"up": -0.02}, "head": {"pitch": -5}, "hand_R": {"side": 0.15, "fwd": 0.15, "up": 0.95}, "hand_L": {"side": -0.15, "fwd": 0.15, "up": 0.95}},
+   {"t": 0.5, "torso": {"up": -0.05}, "head": {"pitch": -8}, "hand_R": {"side": 0.15, "fwd": 0.2, "up": 0.75}, "hand_L": {"side": -0.15, "fwd": 0.2, "up": 0.75}}]}}
+]

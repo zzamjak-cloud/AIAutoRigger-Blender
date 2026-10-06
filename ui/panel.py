@@ -58,12 +58,18 @@ class AIRIG_PT_main(bpy.types.Panel):
             row.prop(state, "anim_style", text="")
             row.prop(state, "anim_root_motion")
             box.operator("airig.generate_motion", icon="PLAY")
+            row = box.row(align=True)
+            row.prop(state, "anim_library", text="")
+            row.operator("airig.generate_library_motion", icon="BOOKMARKS", text="Library")
             box.prop(state, "anim_prompt", text="")
             row = box.row()
             row.prop(state, "anim_review_rounds")
             row.operator("airig.ai_motion", icon="LIGHT_SUN")
             if state.anim_action:
                 box.label(text=f"{state.anim_action}: 키 포즈 {state.anim_keys}개")
+                row = box.row(align=True)
+                row.prop(state, "anim_library_name", text="")
+                row.operator("airig.save_motion_library", icon="FILE_TICK", text="Save")
             for line in _wrap(state.anim_summary, 48)[:4]:
                 box.label(text=line)
         if state.review_summary or state.proposals:

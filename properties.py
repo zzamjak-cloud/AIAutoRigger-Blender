@@ -1,5 +1,21 @@
 import bpy
 
+# EnumProperty items 콜백이 돌려준 문자열은 Blender 가 참조만 하므로 모듈에 살려 둔다
+_library_items = [("", "(없음)", "")]
+
+
+def library_items(self, context):
+    global _library_items
+    try:
+        from .operators.animate import library
+        entries = library()
+    except Exception:  # 애드온 로드 전·사전 파일 손상
+        entries = []
+    items = [(e.name, e.name, e.description or e.name) for e in entries]
+    _library_items = items or [("", "(없음)", "")]
+    return _library_items
+
+
 
 class AIRIG_PG_proposal(bpy.types.PropertyGroup):
     """Rig Review Agent 보정안 (사용자 승인 대기)"""
@@ -57,7 +73,10 @@ class AIRIG_PG_state(bpy.types.PropertyGroup):
     anim_root_motion: bpy.props.BoolProperty(
         name="Root Motion", description="꺼두면 제자리(게임 엔진 권장), 켜면 앞으로 이동한다 (걷기·달리기·점프만)", default=False,
     )
-    anim_prompt: bpy.props.StringProperty(name="Prompt", description="예: 좀비가 다리를 절며 걷는 루프 / 크게 휘두르는 공격 / 뒤로 쓰러지는 사망")
+    anim_prompt: bpy.props.StringProperty(name="Prompt", description="예: 좀비가 다리를 절며 걷는 루프 / 양손 도끼 내려찍기 / 손 흔들며 인사")
+    anim_library: bpy.props.EnumProperty(name="Library", description="동작 사전의 포즈 클립 (내장 + 사용자 저장)", items=library_items)
+    anim_library_name: bpy.props.StringProperty(name="Name", description="사전에 저장할 이름 (영문·숫자·_)")
+    anim_library_desc: bpy.props.StringProperty(name="Description", description="사전 설명 (비우면 프롬프트를 쓴다)")
     anim_review_rounds: bpy.props.IntProperty(
         name="Review Rounds", description="렌더한 프레임을 AI 가 보고 보정하는 횟수", default=1, min=0, max=3,
     )

@@ -19,6 +19,7 @@ MOTIONS = ("WALK", "RUN", "IDLE", "HAPPY", "JUMP", "ATTACK", "HIT", "DEATH")
 LOOPING = frozenset({"WALK", "RUN", "IDLE", "HAPPY"})  # 나머지는 단발 동작
 ROOT_MOTION_OK = frozenset({"WALK", "RUN", "JUMP"})  # 전진이 의미 있는 동작
 STYLES = ("NORMAL", "ZOMBIE")
+ATTACK_KINDS = ("SWING", "THRUST", "SLASH_H", "SLASH_V", "OVERHEAD")
 LINEAR = "LINEAR"
 BEZIER = "BEZIER"
 
@@ -53,8 +54,19 @@ class GaitParams:
     jump_height: float = 0.35  # 점프 높이 / 다리 길이
     anticipation: float = 0.25  # 단발 동작에서 준비 동작(웅크림·팔 뒤로 빼기·무릎 꺾임)에 쓰는 길이 비율
     attack_side: str = "R"  # 공격하는 손
+    attack_kind: str = "SWING"  # 공격 궤적: SWING 가로 휘두르기 | THRUST 찌르기 | SLASH_H 가로 베기 | SLASH_V 세로 베기 | OVERHEAD 내려찍기
+    two_handed: bool = False  # 양손으로 쥐고 공격 (반대 손이 방어 대신 함께 움직임)
     fall_dir: str = "BACK"  # 사망 시 쓰러지는 방향 "BACK" | "FRONT"
     root_motion: bool = False
+
+    @property
+    def loop(self) -> bool:
+        return is_loop(self.motion)
+
+    @property
+    def name(self) -> str:
+        """액션 이름에 쓰는 동작 이름."""
+        return self.motion.lower()
 
     def to_dict(self):
         return asdict(self)
@@ -141,7 +153,9 @@ def clamp(values: dict) -> GaitParams:
             out[f.name] = v if v in ("L", "R") else "R"
         elif f.name == "fall_dir":
             out[f.name] = v if v in ("BACK", "FRONT") else "BACK"
-        elif f.name == "root_motion":
+        elif f.name == "attack_kind":
+            out[f.name] = v if v in ATTACK_KINDS else "SWING"
+        elif f.name in ("root_motion", "two_handed"):
             out[f.name] = bool(v)
         elif f.name in RANGES and isinstance(v, (int, float)) and not isinstance(v, bool):
             lo, hi = RANGES[f.name]
@@ -169,13 +183,13 @@ class Channel:
 
 @dataclass
 class Motion:
-    params: GaitParams
+    params: object  # GaitParams 또는 poseclip.ClipParams (loop·cycle_frames·name·root_motion·to_dict 를 가진다)
     channels: list[Channel]
     root_distance: float  # 전진 거리 (root_motion 일 때, m): 루프는 한 주기, 점프는 한 번
 
     @property
     def loop(self) -> bool:
-        return is_loop(self.params.motion)
+        return bool(self.params.loop)
 
     def key_count(self) -> int:
         return sum(len(c.keys) for c in self.channels)
@@ -415,20 +429,52 @@ def _jump(p: GaitParams, leg: float, arm: float) -> Motion:
     return Motion(p, ch, distance)
 
 
+def _attack_path(kind: str, sgn: float, inw: float, reach: float, up: float, arm: float):
+    """공격 손의 (준비, 타격, 후속) 위치와 손 회전(pitch, roll, yaw). 위치는 m, 캐릭터 기준 (side, fwd, up).
+
+    sgn 은 공격 손이 있는 쪽의 side 부호(오른손 -1). 손 회전은 쥔 무기의 방향을 바꾸기 위한 것으로
+    pitch>0 은 손끝(무기 끝)을 아래로 숙인다.
+    """
+    if kind == "THRUST":  # 몸 옆에서 뒤로 당겼다가 직선으로 찌른다
+        loc = ((sgn * 0.1 * arm, -0.3 * arm, 0.2 * arm), (inw, reach, 0.25 * arm), (inw, 1.05 * reach, 0.25 * arm))
+        rot = ((0.0, 0.0, -sgn * 15.0), (0.0, 0.0, 0.0), (0.0, 0.0, 0.0))
+    elif kind == "SLASH_H":  # 바깥 위에서 가슴 높이로 가로질러 베고 반대편 아래로 빠진다
+        loc = ((sgn * 0.4 * arm, -0.2 * arm, 0.6 * arm), (inw - sgn * 0.3 * arm, 0.8 * reach, 0.3 * arm),
+               (inw - sgn * 0.55 * arm, 0.4 * reach, 0.1 * arm))
+        rot = ((0.0, sgn * 40.0, 0.0), (0.0, 0.0, -sgn * 30.0), (0.0, -sgn * 30.0, -sgn * 60.0))
+    elif kind == "SLASH_V":  # 머리 위로 들었다가 앞으로 내리 벤다
+        loc = ((sgn * 0.15 * arm, -0.1 * arm, up), (inw, reach, 0.1 * arm), (inw, 0.6 * reach, -0.3 * arm))
+        rot = ((-60.0, 0.0, 0.0), (40.0, 0.0, 0.0), (75.0, 0.0, 0.0))
+    elif kind == "OVERHEAD":  # 양손 도끼처럼 머리 위에서 정면 아래로 내려찍는다
+        loc = ((inw, -0.2 * arm, up), (inw, reach, -0.2 * arm), (inw, 0.7 * reach, -0.5 * arm))
+        rot = ((-70.0, 0.0, 0.0), (50.0, 0.0, 0.0), (85.0, 0.0, 0.0))
+    else:  # SWING: 뒤로 뺐다가 몸 앞을 가로질러 휘두른다
+        loc = ((sgn * 0.15 * arm, -0.35 * arm, up), (inw - sgn * 0.1 * arm, reach, 0.15 * arm),
+               (inw - sgn * 0.4 * arm, 0.6 * reach, -0.05 * arm))
+        rot = ((0.0, 0.0, sgn * 30.0), (0.0, 0.0, -sgn * 20.0), (0.0, 0.0, -sgn * 50.0))
+    return loc, rot
+
+
 def _attack(p: GaitParams, leg: float, arm: float) -> Motion:
-    """한 손 휘두르기 단발 동작. 준비(손 뒤로·몸 비틀기) → 타격(돌진·반대로 비틀기) → 후속 → 복귀."""
+    """한 손(또는 양손) 공격 단발 동작. 준비(손 뒤로·몸 비틀기) → 타격(돌진·반대로 비틀기) → 후속 → 복귀.
+
+    궤적은 attack_kind 로 고른다. 양손 공격은 반대 손이 공격 손 옆에 붙어 함께 움직이고, 한 손 공격은 가슴 앞에서 방어한다.
+    """
     a = p.anticipation
     strike = min(0.8, a + 0.15)
     follow = min(0.9, strike + 0.12)
     sgn = 1.0 if p.attack_side == "L" else -1.0  # 휘두르는 손이 있는 쪽 (side 축 부호)
     reach, up = p.arm_forward * arm, p.arm_raise * arm
     lunge, c = p.stride * leg, p.crouch * leg
-    twist, chest_twist = p.hip_yaw_deg, p.chest_counter_deg
+    vertical = p.attack_kind in ("SLASH_V", "OVERHEAD")
+    # 세로 궤적은 비틀기 대신 몸을 세웠다가 앞으로 숙이며 찍는다
+    twist, chest_twist = (0.0, 0.0) if vertical else (p.hip_yaw_deg, p.chest_counter_deg)
+    lean = p.lean_deg * (1.6 if vertical else 1.0)
     torso_loc = _hold([Key(0.0, (0.0, 0.0, 0.0)), Key(a, (0.0, -0.08 * leg, -0.5 * c)), Key(strike, (0.0, lunge, -c)),
-                       Key(follow, (0.0, lunge, -c)), Key(1.0, (0.0, 0.0, 0.0))])
+                       Key(follow, (0.0, lunge, -1.3 * c if vertical else -c)), Key(1.0, (0.0, 0.0, 0.0))])
     # 준비 때 휘두르는 쪽 어깨를 뒤로(그쪽으로 돎), 타격 때 반대로 돈다
-    torso_rot = _hold([Key(0.0, (0.0, 0.0, 0.0)), Key(a, (0.3 * p.lean_deg, 0.0, sgn * twist)),
-                       Key(strike, (p.lean_deg, 0.0, -sgn * twist)), Key(follow, (p.lean_deg, 0.0, -sgn * 1.2 * twist)),
+    torso_rot = _hold([Key(0.0, (0.0, 0.0, 0.0)), Key(a, ((-0.4 if vertical else 0.3) * lean, 0.0, sgn * twist)),
+                       Key(strike, (lean, 0.0, -sgn * twist)), Key(follow, (lean, 0.0, -sgn * 1.2 * twist)),
                        Key(1.0, (0.0, 0.0, 0.0))])
     chest = _hold([Key(0.0, (0.0, 0.0, 0.0)), Key(a, (0.0, 0.0, sgn * chest_twist)), Key(strike, (0.0, 0.0, -sgn * chest_twist)),
                    Key(follow, (0.0, 0.0, -sgn * chest_twist)), Key(1.0, (0.0, 0.0, 0.0))])
@@ -444,15 +490,27 @@ def _attack(p: GaitParams, leg: float, arm: float) -> Motion:
     hand = p.attack_side
     other = "L" if hand == "R" else "R"
     inw = _inward(p, arm, hand)
-    swing = [Key(0.0, (0.0, 0.0, 0.0)), Key(a, (sgn * 0.15 * arm, -0.35 * arm, up)),
-             Key(strike, (inw - sgn * 0.1 * arm, reach, 0.15 * arm)), Key(follow, (inw - sgn * 0.4 * arm, 0.6 * reach, -0.05 * arm)),
-             Key(min(0.95, follow + 0.2), (0.0, 0.15 * arm, 0.05 * arm)), Key(1.0, (0.0, 0.0, 0.0))]
+    (wind, hit, post), (rw, rh, rp) = _attack_path(p.attack_kind, sgn, inw, reach, up, arm)
+    recover_t = min(0.95, follow + 0.2)
+    swing = [Key(0.0, (0.0, 0.0, 0.0)), Key(a, wind), Key(strike, hit), Key(follow, post),
+             Key(recover_t, (0.0, 0.15 * arm, 0.05 * arm)), Key(1.0, (0.0, 0.0, 0.0))]
     ch.append(Channel(f"hand_ik.{hand}", "loc", _hold(_follow(swing, torso_loc))))
-    # 반대 손은 가슴 앞에서 방어 자세
-    oin = _inward(p, arm, other)
-    guard = [Key(0.0, (0.0, 0.0, 0.0)), Key(a, (oin, 0.35 * arm, 0.3 * arm)), Key(strike, (oin, 0.3 * arm, 0.3 * arm)),
-             Key(follow, (oin, 0.3 * arm, 0.3 * arm)), Key(1.0, (0.0, 0.0, 0.0))]
-    ch.append(Channel(f"hand_ik.{other}", "loc", _hold(_follow(guard, torso_loc))))
+    zero = (0.0, 0.0, 0.0)
+    ch.append(Channel(f"hand_ik.{hand}", "rot", _hold([Key(0.0, zero), Key(a, rw), Key(strike, rh), Key(follow, rp),
+                                                        Key(recover_t, zero), Key(1.0, zero)])))
+    if p.two_handed:
+        # 반대 손은 공격 손 옆(무기 자루 위)에 붙어 같은 궤적을 따른다. 손 레스트 위치가 어깨 폭만큼 다르므로 그만큼 공격 쪽으로 옮긴다
+        shift = sgn * 0.7 * arm
+        grip = [Key(k.t, (k.value[0] + shift, k.value[1], k.value[2] - 0.05 * arm)) for k in swing]
+        ch.append(Channel(f"hand_ik.{other}", "loc", _hold(_follow(grip, torso_loc))))
+        ch.append(Channel(f"hand_ik.{other}", "rot", _hold([Key(0.0, zero), Key(a, rw), Key(strike, rh), Key(follow, rp),
+                                                             Key(recover_t, zero), Key(1.0, zero)])))
+    else:
+        # 반대 손은 가슴 앞에서 방어 자세
+        oin = _inward(p, arm, other)
+        guard = [Key(0.0, zero), Key(a, (oin, 0.35 * arm, 0.3 * arm)), Key(strike, (oin, 0.3 * arm, 0.3 * arm)),
+                 Key(follow, (oin, 0.3 * arm, 0.3 * arm)), Key(1.0, zero)]
+        ch.append(Channel(f"hand_ik.{other}", "loc", _hold(_follow(guard, torso_loc))))
     return Motion(p, ch, 0.0)
 
 

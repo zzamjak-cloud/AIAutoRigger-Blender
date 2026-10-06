@@ -47,7 +47,9 @@
 | **Motion / Style** | 루프: Walk·Run·Idle·Happy / 단발: Jump·Attack·Hit·Death × Normal·Zombie 프리셋 |
 | **Root Motion** | 끄면 제자리(게임 엔진 권장), 켜면 전진한다. 걷기·달리기는 주기마다 이어지고 점프는 체공 중에 한 번 이동한다 |
 | **Generate Motion** | 프리셋으로 바로 생성 (AI 없음) |
-| **프롬프트 + AI Motion** | 예: "좀비가 다리를 절며 걷는 루프", "크게 휘두르는 왼손 공격", "앞으로 엎어지는 사망". AI 가 동작 종류와 파라미터(보폭·박자·숙임·팔 뻗기·절뚝임·점프 높이·준비 동작 길이·공격 손·쓰러지는 방향 등)를 정하고, **Review Rounds** 만큼 측면·정면 프레임 렌더와 실측값을 보며 보정한다 |
+| **Library** | 동작 사전의 포즈 클립으로 바로 생성 (AI 없음). 내장 14종 + 사용자 저장분 |
+| **프롬프트 + AI Motion** | 예: "좀비가 다리를 절며 걷는 루프", "양손 도끼 내려찍기", "손 흔들며 인사", "바닥에 앉기". AI 가 절차 생성기 파라미터(PARAMS) 또는 포즈 시퀀스(CLIP) 중 맞는 쪽으로 설계하고, **Review Rounds** 만큼 측면·정면 프레임 렌더와 실측값을 보며 보정한다 |
+| **Save** | 현재 애니메이션을 포즈 클립으로 바꿔 사용자 사전에 저장한다. 이후 Library 드롭다운과 AI 설계 예시에 나타난다 |
 
 | 동작 | 종류 | 내용 |
 |---|---|---|
@@ -57,6 +59,22 @@
 | Attack | 단발 | 한 손(기본 오른손)을 뒤로 빼며 몸을 비틀고 돌진하며 휘두른 뒤 복귀. 반대 손은 방어 자세 |
 | Hit | 단발 | 충격에 몸통이 뒤로 젖혀지고 밀리며 팔이 벌어졌다가 복귀 |
 | Death | 단발 | 무릎이 꺾이며 뒤(Normal) 또는 앞(Zombie)으로 쓰러져 눕고 끝 자세를 유지 |
+
+Attack 은 궤적 `attack_kind`(SWING 휘두르기 · THRUST 찌르기 · SLASH_H 가로 베기 · SLASH_V 세로 베기 · OVERHEAD 내려찍기)와 `two_handed`(양손 그립)를 AI 가 고른다.
+
+**동작 사전 (포즈 클립)** — Library 드롭다운 또는 AI 가 변형해 쓴다.
+
+| 이름 | 종류 | 내용 |
+|---|---|---|
+| punch / dagger_stab / sword_thrust | 단발 | 주먹·단검·장검 찌르기 |
+| sword_slash / axe_overhead_2h | 단발 | 한손 가로 베기, 양손 도끼 내려찍기 |
+| kick / block | 단발 | 앞차기, 방어 |
+| wave / clap / cheer / dance | 루프 | 손 흔들기, 박수, 환호, 춤 |
+| bow / point / sit_down | 단발 | 인사, 가리키기, 바닥에 앉기(앉은 자세 유지) |
+
+- 포즈 클립은 몸통·골반·가슴·머리·양손·양발의 캐릭터 기준 오프셋(다리·팔 길이 비율)과 회전(도)만 쓰는 JSON 이다. 발 접지 구간 선형, 바닥 관통 방지, 루프 닫기, 키 수 제한(12), 범위 클램프는 코드가 보장하므로 AI 가 값을 잘못 써도 캐릭터가 바닥을 뚫거나 루프가 끊기지 않는다.
+- 사용자 사전은 Blender 설정 폴더의 `ai_auto_rigger/motions/*.json` 이다. 같은 이름은 사용자 항목이 내장 항목을 덮는다.
+- 무기 메시는 포함하지 않는다. 손 궤적·회전만 만들므로 Unity 에서 손 본에 무기를 붙여 쓴다.
 
 - 키는 매 프레임이 아니라 동작 극점(접지·낮은 자세·교차·높은 자세)에만 들어간다. 커브당 최대 7개, Auto-Clamped 베지어, 루프는 Cycles 모디파이어로 반복한다. 단발 동작은 반복하지 않고 끝 키 값을 유지한다(점프·공격·피격은 레스트로 복귀, 사망은 누운 자세). 걷기 32프레임 기준 키 포즈 59개(매 프레임 방식은 352개)라 그래프 에디터에서 손으로 다듬기 쉽다.
 - 발이 땅을 딛는 구간만 선형 보간이라 미끄러지지 않고, 발 굴림은 Rigify `foot_heel_ik` 로 처리해 발끝이 바닥을 뚫지 않는다.
@@ -124,7 +142,7 @@ scripts/dev_run.sh --background --python tests/blender_smoke.py     # 등록·�
 scripts/dev_run.sh --background --python tests/blender_rig_test.py  # 2족·4족 자동 리깅, IK 동작, rest 변형 0
 scripts/dev_run.sh --background --python tests/blender_finger_test.py  # 손가락 검출·Rigify 손가락 굽힘 (곧은 손·갈고리 손·벙어리장갑형)
 scripts/dev_run.sh --background --python tests/blender_face_test.py -- dist/face_test  # 턱·눈 리깅, Unity 이름·간소화 내보내기
-scripts/dev_run.sh --background --python tests/blender_motion_test.py -- dist/motion_test  # 루프 이음새·발 고정·체공·단발 동작·FBX 굽기·AI Motion(가짜 CLI)
+scripts/dev_run.sh --background --python tests/blender_motion_test.py -- dist/motion_test  # 루프·단발·공격 궤적·동작 사전·FBX 굽기·AI Motion(가짜 CLI)
 scripts/dev_run.sh --background --python tests/blender_ai_test.py   # AI Auto Rig: API(모의 SDK)·Claude Code·Codex(가짜 CLI), 비용 없음
 scripts/dev_run.sh --background --python tests/blender_review_test.py  # AI 검토 라운드·보정안 적용 (가짜 Codex CLI)
 scripts/dev_run.sh --background --python tests/blender_export_test.py -- dist/export_test  # 게임 FBX 재임포트 검증

@@ -1,14 +1,17 @@
-"""Motion Agent: 자연어 프롬프트 → 동작(루프·단발) 파라미터, 프레임 렌더 검토 → 파라미터 보정 (bpy 비의존).
+"""Motion Agent: 자연어 프롬프트 → 동작 파라미터 또는 포즈 시퀀스(클립), 프레임 렌더 검토 → 보정 (bpy 비의존).
 
-AI 는 키를 직접 찍지 않고 동작 생성기의 파라미터만 정한다. 발 고정·루프 이음새·단발 동작 구조는 생성기가 보장한다.
+AI 는 키를 직접 찍지 않는다. 두 가지 중 하나를 고른다.
+- PARAMS: 걷기·달리기 등 절차 생성기의 파라미터만 정한다 (발 고정·루프 이음새는 생성기가 보장).
+- CLIP: 제한된 포즈 언어로 극점 포즈를 쓴다. 동작 사전의 비슷한 항목을 바탕으로 변형하거나 새로 설계한다.
+  바닥 관통·루프 닫기·범위는 poseclip 이 보장한다.
 """
 
 from __future__ import annotations
 
 try:
-    from ..core import locomotion
+    from ..core import locomotion, poseclip
 except ImportError:  # 단위 테스트에서 애드온 패키지 밖(core 최상위)으로 불러올 때
-    from core import locomotion
+    from core import locomotion, poseclip
 
 DESCRIPTIONS = {
     "motion": "WALK, RUN, IDLE, HAPPY (loops) or JUMP, ATTACK, HIT, DEATH (one-shot clips)",
@@ -37,29 +40,55 @@ DESCRIPTIONS = {
     "jump_height": "JUMP: jump height / leg length",
     "anticipation": "one-shot clips: fraction of the clip spent on the wind-up (squat, pulling the arm back, knees buckling)",
     "attack_side": "ATTACK: L or R, the swinging hand",
+    "attack_kind": "ATTACK trajectory: SWING (horizontal swing across the body), THRUST (straight stab), SLASH_H (high "
+                   "wind-up, horizontal cut), SLASH_V (overhead to front, vertical cut), OVERHEAD (heavy chop down to the ground)",
+    "two_handed": "ATTACK: true when the weapon is held with both hands (the other hand follows the grip instead of guarding)",
     "fall_dir": "DEATH: BACK (falls on the back) or FRONT (falls face down)",
     "root_motion": "true to move forward in the scene (WALK, RUN, JUMP only), false for in-place (game engines usually want false)",
 }
 
-MOTION_NOTES = ("Motions: WALK, RUN, IDLE and HAPPY (arms up, pumping, small hops) are seamless loops. JUMP (squat, launch, "
-                "tuck in the air, land and recover), ATTACK (wind up one hand, twist, lunge and swing, recover), HIT (recoil "
-                "back, arms flung out, recover) and DEATH (knees buckle, fall BACK or FRONT, lie still) are one-shot clips "
-                "that play once. Each parameter description says which motions use it; the others ignore it.")
+MOTION_NOTES = ("PARAMS motions: WALK, RUN, IDLE and HAPPY (arms up, pumping, small hops) are seamless loops. JUMP (squat, "
+                "launch, tuck in the air, land and recover), ATTACK (wind up one hand, twist, lunge and swing/thrust/slash/chop, "
+                "recover), HIT (recoil back, arms flung out, recover) and DEATH (knees buckle, fall BACK or FRONT, lie still) "
+                "are one-shot clips that play once. Each parameter description says which motions use it; the others ignore it.")
 
-SYSTEM = ("You design character animation clips for a game: locomotion loops and one-shot actions. A procedural "
-          "generator turns your parameters into a clean Bezier-keyed clip on a Rigify control rig: feet stay planted, "
-          "loops are seamless and one-shot clips start from the rest pose, so only choose parameters that express the "
-          "requested motion and style. Stay inside the given ranges.")
+CLIP_SPEC = """CLIP format (pose sequence): {"name": "snake_case id", "loop": bool, "frames": int, "root_distance": number, \
+"keys": [key, ...]} with at most 12 keys. Each key: {"t": 0..1 fraction of the clip, "ease": "BEZIER" or "LINEAR" (to the \
+next key), "rest": true to put every control at the rest pose at that time, and one entry per control: "torso", "hips", \
+"chest", "head", "hand_L", "hand_R", "foot_L", "foot_R", each either null (no key for that control at this time) or an object. \
+Position fields side/fwd/up are character-relative offsets from the rest pose: side>0 = character's left, fwd>0 = in front, \
+up>0 = higher; units are leg lengths for torso and feet and arm lengths for hands. Rotation fields pitch/roll/yaw are degrees: \
+pitch>0 bends forward (for a hand: tilts the held weapon tip down), roll>0 tilts to the character's right, yaw>0 turns to the \
+left. torso has side/fwd/up/pitch/roll/yaw (hips/chest/head only rotations, relative to their parent). hand_L/hand_R \
+positions are relative to the moving torso, so a hand that keeps its offset moves with the body; the rest pose is an A-pose \
+with the hands beside the hips, so hands in front of the chest need fwd~0.5, up~0.4 and side toward the body center \
+(hand_R side>0, hand_L side<0, ~0.3-0.6 when both hands meet). foot_L/foot_R have side/fwd/up/pitch/roll/yaw/heel (heel>0 \
+lifts the heel for a toe roll); up==0 means planted, and planted feet never slide. A control with no key at all stays at \
+rest. Loops must not include t=1 (the generator closes them); one-shot clips start at t=0 and hold their last key, so end with \
+"rest": true unless the pose should stay (sitting, lying). Controls omitted from a key are null."""
 
-REVIEW_SYSTEM = SYSTEM + """ You are now reviewing rendered frames of the current loop against the request, together \
-with measured values of the generated loop. The renders and the measurements come from the same animation: small \
-motions can look almost identical between frames, so judge their size from the measurements rather than assuming the \
-pipeline is broken. If the motion already matches, set done=true and keep the parameters. Otherwise return adjusted \
-parameters (for a motion that is too subtle, increase stride, step_height, bounce or swings) and done=false. Change \
-only what is needed."""
+SYSTEM = ("You design character animation clips for a game. You never key bones directly: you either set parameters of a "
+          "procedural generator (PARAMS mode) or write a short pose sequence in a constrained pose language (CLIP mode). "
+          "Rigify control rig, feet stay planted unless lifted, loops are seamless, floor penetration is prevented, values "
+          "are clamped to the given ranges. Use PARAMS for walking, running, idling and the listed one-shot motions when they "
+          "match; use CLIP for anything else (weapon attacks, social and emote animations, poses) by adapting the closest "
+          "library clip or designing a new one with 4-8 expressive key poses. Keep timing readable: wind-up, main action, "
+          "follow-through, recovery.")
+
+REVIEW_SYSTEM = SYSTEM + (" You are now reviewing rendered frames of the current clip against the request, together with "
+                          "measured values of the generated clip. The renders and the measurements come from the same "
+                          "animation: small motions can look almost identical between frames, so judge their size from the "
+                          "measurements rather than assuming the pipeline is broken. If the motion already matches, set "
+                          "done=true and return the same mode and content. Otherwise return the adjusted params or clip "
+                          "(for a motion that is too subtle, enlarge the offsets, angles, stride or swings) and done=false. "
+                          "Change only what is needed and keep the same mode unless the other one clearly fits better.")
 
 
-def schema() -> dict:
+def _num(nullable=False):
+    return {"type": ["number", "null"]} if nullable else {"type": "number"}
+
+
+def params_schema() -> dict:
     props = {}
     for name in locomotion.GaitParams.__dataclass_fields__:
         if name == "motion":
@@ -68,61 +97,113 @@ def schema() -> dict:
             props[name] = {"type": "string", "enum": ["NONE", "L", "R"]}
         elif name == "attack_side":
             props[name] = {"type": "string", "enum": ["L", "R"]}
+        elif name == "attack_kind":
+            props[name] = {"type": "string", "enum": list(locomotion.ATTACK_KINDS)}
         elif name == "fall_dir":
             props[name] = {"type": "string", "enum": ["BACK", "FRONT"]}
-        elif name == "root_motion":
+        elif name in ("root_motion", "two_handed"):
             props[name] = {"type": "boolean"}
         elif name == "cycle_frames":
             props[name] = {"type": "integer"}
         else:
             props[name] = {"type": "number"}
-    params = {"type": "object", "properties": props, "required": list(props), "additionalProperties": False}
+    return {"type": "object", "properties": props, "required": list(props), "additionalProperties": False}
+
+
+def clip_schema() -> dict:
+    def control(fields):
+        return {"type": ["object", "null"], "properties": {f: _num() for f in fields}, "required": list(fields),
+                "additionalProperties": False}
+
+    key_props = {"t": _num(), "ease": {"type": "string", "enum": [locomotion.BEZIER, locomotion.LINEAR]}, "rest": {"type": "boolean"}}
+    for c in poseclip.CONTROLS:
+        key_props[c] = control(poseclip.FIELDS[c])
+    key = {"type": "object", "properties": key_props, "required": list(key_props), "additionalProperties": False}
+    props = {"name": {"type": "string"}, "loop": {"type": "boolean"}, "frames": {"type": "integer"},
+             "root_distance": _num(), "keys": {"type": "array", "items": key}}
+    return {"type": "object", "properties": props, "required": list(props), "additionalProperties": False}
+
+
+def schema() -> dict:
+    """응답 스키마: mode 에 따라 params 또는 clip 중 하나를 채우고 나머지는 null."""
+    params = params_schema()
+    params["type"] = ["object", "null"]
+    clip = clip_schema()
+    clip["type"] = ["object", "null"]
     return {
         "type": "object",
-        "properties": {"params": params, "done": {"type": "boolean"}, "summary": {"type": "string"}},
-        "required": ["params", "done", "summary"],
+        "properties": {"mode": {"type": "string", "enum": ["PARAMS", "CLIP"]}, "params": params, "clip": clip,
+                       "done": {"type": "boolean"}, "summary": {"type": "string"}},
+        "required": ["mode", "params", "clip", "done", "summary"],
         "additionalProperties": False,
     }
 
 
-def _param_lines(current: locomotion.GaitParams | None) -> list[str]:
-    lines = [MOTION_NOTES, "Parameters (name: meaning [range]):"]
+def _param_lines(current) -> list[str]:
+    lines = [MOTION_NOTES, "PARAMS parameters (name: meaning [range]):"]
     for name, desc in DESCRIPTIONS.items():
         rng = locomotion.RANGES.get(name)
         lines.append(f"- {name}: {desc}" + (f" [{rng[0]}..{rng[1]}]" if rng else ""))
-    if current is not None:
-        lines.append("Current parameters: " + str(current.to_dict()))
+    lines.append(CLIP_SPEC)
+    if isinstance(current, poseclip.ClipParams):
+        lines.append("Current clip (CLIP mode, omitted controls are null): " + poseclip.compact(current.clip))
+    elif current is not None:
+        lines.append("Current parameters (PARAMS mode): " + str(current.to_dict()))
     return lines
 
 
-def request_prompt(prompt: str, motion_hint: str, leg: float, arm: float, base: locomotion.GaitParams, fps: int = 24) -> str:
+def _library_lines(library) -> list[str]:
+    if not library:
+        return []
+    lines = ["Motion library (CLIP examples you can copy and adapt; omitted controls are null):"]
+    for e in library:
+        lines.append(f"- {e.name}: {e.description} => {poseclip.compact(e.clip)}")
+    return lines
+
+
+def request_prompt(prompt: str, motion_hint: str, leg: float, arm: float, base, fps: int = 24, library=()) -> str:
     lines = [f'Request: "{prompt}"', f"Selected motion type in the UI: {motion_hint} (follow the request if it clearly asks for another).",
              f"Character: leg length {leg:.2f} m, arm length {arm:.2f} m. Scene frame rate: {fps} fps."]
     lines += _param_lines(base)
-    lines.append("Return the parameters for the requested motion. done is ignored here; summary: one short sentence.")
+    lines += _library_lines(library)
+    lines.append("Return mode PARAMS with params (clip null) or mode CLIP with clip (params null). done is ignored here; "
+                 "summary: one short sentence naming the mode and, for CLIP, which library clip it was based on if any.")
     return "\n".join(lines)
 
 
-def review_prompt(prompt: str, params: locomotion.GaitParams, labels: list[str], measured: str = "") -> str:
+def review_prompt(prompt: str, params, labels: list[str], measured: str = "", library=()) -> str:
     lines = [f'Request: "{prompt}"', "Images (in order; side views from the character's left, t = fraction of the "
              "cycle or clip): " + ", ".join(labels)]
     if measured:
-        lines.append("Measured from the generated loop: " + measured)
+        lines.append("Measured from the generated clip: " + measured)
     lines += _param_lines(params)
+    lines += _library_lines(library)
     return "\n".join(lines)
 
 
-def parse(data) -> tuple[locomotion.GaitParams, bool, str]:
-    if not isinstance(data, dict) or not isinstance(data.get("params"), dict):
+def parse(data) -> tuple[object, bool, str]:
+    """응답 → (GaitParams 또는 ClipParams, done, summary). mode 가 없으면 채워진 쪽을 쓴다."""
+    if not isinstance(data, dict):
+        raise ValueError("응답이 JSON 객체가 아닙니다.")
+    mode = data.get("mode")
+    clip, params = data.get("clip"), data.get("params")
+    if mode is None:
+        mode = "CLIP" if isinstance(clip, dict) and not isinstance(params, dict) else "PARAMS"
+    done, summary = data.get("done") is True, str(data.get("summary") or "")
+    if mode == "CLIP":
+        if not isinstance(clip, dict):
+            raise ValueError("응답에 clip 이 없습니다.")
+        return poseclip.ClipParams(poseclip.clamp(clip)), done, summary
+    if not isinstance(params, dict):
         raise ValueError("응답에 params 가 없습니다.")
-    return locomotion.clamp(data["params"]), data.get("done") is True, str(data.get("summary") or "")
+    return locomotion.clamp(params), done, summary
 
 
-def ask_params(backend, prompt, motion_hint, leg, arm, base, fps=24):
-    data = backend.run_json(SYSTEM, request_prompt(prompt, motion_hint, leg, arm, base, fps), [], schema())
+def ask_params(backend, prompt, motion_hint, leg, arm, base, fps=24, library=()):
+    data = backend.run_json(SYSTEM, request_prompt(prompt, motion_hint, leg, arm, base, fps, library), [], schema())
     return parse(data)
 
 
-def ask_review(backend, prompt, params, images, measured=""):
-    data = backend.run_json(REVIEW_SYSTEM, review_prompt(prompt, params, [n for n, _ in images], measured), images, schema())
+def ask_review(backend, prompt, params, images, measured="", library=()):
+    data = backend.run_json(REVIEW_SYSTEM, review_prompt(prompt, params, [n for n, _ in images], measured, library), images, schema())
     return parse(data)

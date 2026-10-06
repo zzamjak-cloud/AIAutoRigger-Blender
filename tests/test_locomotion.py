@@ -171,9 +171,29 @@ class MotionAgentTest(unittest.TestCase):
         self.assertEqual(set(params["required"]), set(params["properties"]))
         self.assertEqual(set(params["properties"]), set(L.GaitParams.__dataclass_fields__))
         self.assertEqual(set(motion_agent.DESCRIPTIONS), set(L.GaitParams.__dataclass_fields__))
+        self.assertEqual(params["properties"]["attack_kind"]["enum"], list(L.ATTACK_KINDS))
+
+    def test_attack_kinds_and_two_handed(self):
+        base = L.preset("ATTACK")
+        for kind in L.ATTACK_KINDS:
+            m = L.generate(L.preset("ATTACK", attack_kind=kind), LEG, ARM)
+            hand = channel(m, "hand_ik.R", "loc").keys
+            self.assertGreater(max(k.value[1] for k in hand), 0.5 * base.arm_forward * ARM, f"{kind}: 앞으로 뻗음")
+            self.assertTrue(any(c.bone == "hand_ik.R" and c.kind == "rot" for c in m.channels), f"{kind}: 손 회전 채널")
+            self.assertEqual(hand[-1].value, (0.0, 0.0, 0.0), f"{kind}: 복귀")
+        thrust = channel(L.generate(L.preset("ATTACK", attack_kind="THRUST"), LEG, ARM), "hand_ik.R", "loc").keys
+        swing = channel(L.generate(L.preset("ATTACK", attack_kind="SWING"), LEG, ARM), "hand_ik.R", "loc").keys
+        self.assertLess(max(abs(k.value[0]) for k in thrust), max(abs(k.value[0]) for k in swing), "찌르기는 옆 이동이 작다")
+        over = L.generate(L.preset("ATTACK", attack_kind="OVERHEAD", two_handed=True), LEG, ARM)
+        l_hand, r_hand = channel(over, "hand_ik.L", "loc").keys, channel(over, "hand_ik.R", "loc").keys
+        self.assertEqual(len(l_hand), len(r_hand))
+        self.assertAlmostEqual(max(k.value[2] for k in l_hand), max(k.value[2] for k in r_hand) - 0.05 * ARM, places=6, msg="양손이 함께 올라감")
+        self.assertTrue(any(c.bone == "hand_ik.L" and c.kind == "rot" for c in over.channels))
+        self.assertEqual(L.clamp({"motion": "ATTACK", "attack_kind": "X", "two_handed": 1}).attack_kind, "SWING")
+        self.assertTrue(L.clamp({"motion": "ATTACK", "two_handed": 1}).two_handed)
 
     def test_parse(self):
-        p, done, summary = motion_agent.parse({"params": {"motion": "WALK", "limp": 5}, "done": True, "summary": "ok"})
+        p, done, summary = motion_agent.parse({"mode": "PARAMS", "params": {"motion": "WALK", "limp": 5}, "clip": None, "done": True, "summary": "ok"})
         self.assertEqual((p.limp, done, summary), (1.0, True, "ok"))
         with self.assertRaises(ValueError):
             motion_agent.parse({"done": True})
