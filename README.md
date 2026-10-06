@@ -84,7 +84,7 @@ Attack 은 궤적 `attack_kind`(SWING 휘두르기 · THRUST 찌르기 · SLASH_
 ### Unity 로 내보내기
 
 - metarig(숨겨진 설계도)와 Rigify 컨트롤 리그는 Blender 안에서 애니메이션 작업용이다. 직접 내보내지 말고 **Export Game FBX** 를 쓴다.
-- 내보내기는 DEF(변형) 본만 Hips 아래 한 계층으로 다시 엮은 임시 아마추어를 만들어 메시와 함께 FBX 로 쓰고, 컨트롤 리그 애니메이션은 이 본들에 굽는다. 컨트롤 본 수백 개는 FBX 에 들어가지 않는다(예: 리그 366본 → FBX 63본, Simplify 시 47본). Unity 이름일 때 트위스트·손바닥 본은 Humanoid 본 사이에 끼지 않도록 부모 Humanoid 본의 곁가지로 둔다(사이에 끼면 Unity 가 "Inbetween bone rotation ... does not match" 리그 오류를 낸다).
+- 내보내기는 DEF(변형) 본만 Hips 아래 한 계층으로 다시 엮은 임시 아마추어를 만들어 메시와 함께 FBX 로 쓰고, 컨트롤 리그 애니메이션은 이 본들에 굽는다. 컨트롤 본 수백 개는 FBX 에 들어가지 않는다(예: 리그 366본 → FBX 63본, Simplify 시 47본). Unity 이름일 때 트위스트·손바닥 본은 Humanoid 본 사이에 끼지 않도록 부모 Humanoid 본의 곁가지로 둔다(사이에 끼면 Unity 가 "Inbetween bone rotation ... does not match" 리그 오류를 낸다). 또 Unity 이름일 때는 본 스케일을 굽지 않는다(Humanoid 는 스케일 애니메이션을 버리며 경고를 낸다. Rigify IK 스트레치로 생기는 사지 길이 변화는 Unity 에서 반영되지 않는다).
 - Unity: FBX 의 **Rig > Animation Type = Humanoid**, **Avatar Definition = Create From This Model**. 손가락·턱·눈까지 자동 매핑되며 `<이름>.humanoid.json` 에 매핑 표가 함께 저장된다.
 - 본 수: 스키닝 비용은 본 수보다 정점 수 × 정점당 영향 본 수(Unity 기본 4)에 좌우된다. 60본대는 일반적인 휴머노이드 수준이며, 모바일·군중용은 Simplify Bones 를 권장한다.
 - 정면이 +Y 인 모델은 Unity 에서 뒤를 보고 들어오므로 Blender 에서 Z축 180° 회전을 적용한 뒤 리깅하는 것을 권장한다.

@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.7.4]
+
+- **Unity "has scale animation that will be discarded" 애니메이션 임포트 경고 제거**: Rigify IK 스트레치가 사지 길이를 바꾼 값(닿는 거리에서도 2~3% 줄임, 다리 길이를 넘는 점프 등에서는 늘임)이 본 스케일로 구워지던 문제. Unity 이름으로 내보낼 때는 스케일을 굽지 않고 회전·이동만 굽는다 (Humanoid 는 원래 스케일을 버리므로 Unity 결과는 같다). Rigify DEF 이름(Generic) 내보내기는 스케일을 유지
+- Unity 아바타 검사가 애니메이션 임포트 경고도 실패로 잡는다
+- 0.7.3 이전 FBX 를 덮어쓴 뒤 "Avatar creation failed: Parent for ... differs" 가 나면 Rig 탭에서 Generic → Humanoid 로 바꿔 Apply 해 아바타를 다시 만든다
+
 ## [0.7.3]
 
 - **Unity "Avatar Rig Configuration mis-match" 리그 오류 수정**: Unity 이름으로 내보낼 때 트위스트 분절·손바닥 본이 Humanoid 본 사이(UpperLeg → UpperLegTwist → LowerLeg 등)에 끼어 애니메이션에서 회전하던 문제. 이제 Humanoid 본은 가장 가까운 Humanoid 조상에 바로 붙고, 트위스트·손바닥 본은 웨이트를 유지한 채 곁가지로 남는다 (Rigify DEF 이름 내보내기는 그대로)

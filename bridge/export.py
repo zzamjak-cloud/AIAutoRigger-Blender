@@ -255,10 +255,13 @@ def export_actions(rig):
     return found
 
 
-def _bake_actions(context, rig, game, actions):
+def _bake_actions(context, rig, game, actions, bake_scale=True):
     """리그 액션마다 게임 아마추어의 시각 포즈(제약 결과)를 키로 구워 액션 이름의 NLA 스트립으로 올린다.
 
     굽는 동안 리그 NLA 를 끄고 액션을 하나씩 활성으로 둔다. 다 구우면 제약을 지워 스트립만으로 움직이게 한다.
+    bake_scale=False 면 스케일은 1 로 두고 회전·이동만 굽는다. Rigify IK 는 스트레치로 사지 길이를 바꾸는데
+    (닿는 거리 안에서도 2~3% 줄이고, 다리 길이를 넘는 목표엔 늘인다) Unity Humanoid 는 본 스케일 애니메이션을
+    버리며 "has scale animation that will be discarded" 경고를 내므로 Unity 이름에서는 굽지 않는다.
     """
     scene = context.scene
     ad = rig.animation_data
@@ -270,6 +273,7 @@ def _bake_actions(context, rig, game, actions):
     bones = list(game.pose.bones)
     for pb in bones:
         pb.rotation_mode = "QUATERNION"
+    props = ("location", "rotation_quaternion", "scale") if bake_scale else ("location", "rotation_quaternion")
     baked = []
     try:
         for action, slot in actions:
@@ -295,8 +299,10 @@ def _bake_actions(context, rig, game, actions):
                     if p is not None and q.dot(p) < 0.0:
                         q.negate()  # 보간이 반대 방향으로 돌지 않게 부호를 맞춘다
                     prev_q[pb.name] = q
-                    pb.location, pb.rotation_quaternion, pb.scale = loc, q, scale
-                    for prop in ("location", "rotation_quaternion", "scale"):
+                    pb.location, pb.rotation_quaternion = loc, q
+                    if bake_scale:
+                        pb.scale = scale
+                    for prop in props:
                         pb.keyframe_insert(prop, frame=frame, group=pb.name)
             baked.append((action.name, start, out))
     finally:
@@ -356,7 +362,7 @@ def export_fbx(context, rig, metarig, mesh, filepath, naming="RIGIFY", bake_anim
         )
         if actions:
             # 제약으로 움직이는 게임 아마추어에 액션마다 구운 뒤, 스트립마다 테이크 하나로 내보낸다
-            _bake_actions(context, rig, game, actions)
+            _bake_actions(context, rig, game, actions, bake_scale=naming != "UNITY")
             kwargs.update(bake_anim_use_all_actions=False, bake_anim_use_nla_strips=True,
                           bake_anim_force_startend_keying=True, bake_anim_simplify_factor=0.0)
         bpy.ops.export_scene.fbx(**kwargs)

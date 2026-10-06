@@ -297,6 +297,14 @@ bpy.context.scene.frame_set(int(lo))
 a0 = (arm.matrix_world @ arm.pose.bones["LeftFoot"].head).copy()
 bpy.context.scene.frame_set(int(lo + n // 2))
 check((arm.matrix_world @ arm.pose.bones["LeftFoot"].head - a0).length > 0.1, "FBX 에 걸음 동작이 구워짐")
+# Unity Humanoid 는 본 스케일 애니메이션을 버리므로 (IK 스트레치가 사지를 늘이는 점프도) 구운 스케일은 1 이어야 한다
+worst = 0.0
+for act in [a for a in bpy.data.actions if any(t in a.name for t in take_names)]:
+    arm.animation_data.action = act
+    for f in range(int(act.frame_range[0]), int(act.frame_range[1]) + 1, 3):
+        bpy.context.scene.frame_set(f)
+        worst = max(worst, max(abs(v - 1) for pb in arm.pose.bones for v in pb.matrix_basis.to_scale()))
+check(worst < 1e-3, f"FBX 본 스케일 애니메이션 없음 (최대 |s-1| {worst:.4f})")
 bpy.ops.wm.open_mainfile(filepath=str(saved))
 st = bpy.context.scene.airig
 scene = bpy.context.scene

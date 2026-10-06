@@ -30,11 +30,13 @@ public static class AvatarCheck
         Application.logMessageReceived -= onLog;
 
         var avatar = AssetDatabase.LoadAllAssetsAtPath(path).OfType<Avatar>().FirstOrDefault();
+        // 애니메이션 Import Messages (예: Humanoid 가 버리는 본 스케일 애니메이션)
+        var animWarnings = new SerializedObject(importer).FindProperty("m_AnimationImportWarnings")?.stringValue ?? "";
         var human = importer.humanDescription.human;
         var mapped = human.ToDictionary(h => h.humanName, h => h.boneName);
         var missing = Required.Where(r => !mapped.ContainsKey(r)).ToArray();
         var wrong = Required.Where(r => mapped.ContainsKey(r) && mapped[r] != r).ToArray();
-        bool ok = avatar != null && avatar.isValid && avatar.isHuman && missing.Length == 0 && wrong.Length == 0 && rigErrors.Count == 0;
+        bool ok = avatar != null && avatar.isValid && avatar.isHuman && missing.Length == 0 && wrong.Length == 0 && rigErrors.Count == 0 && animWarnings.Length == 0;
 
         var optional = new[] { "Jaw", "LeftEye", "RightEye", "Left Thumb Proximal", "Left Index Proximal", "Left Middle Proximal", "Left Ring Proximal" }
             .Where(mapped.ContainsKey).Select(o => $"\"{o}:{mapped[o]}\"");
@@ -42,7 +44,8 @@ public static class AvatarCheck
                      $"\"human\":{(avatar != null && avatar.isHuman).ToString().ToLower()},\"mapped\":{mapped.Count}," +
                      $"\"missing\":[{string.Join(",", missing.Select(m => $"\"{m}\""))}]," +
                      $"\"mismatched\":[{string.Join(",", wrong.Select(m => $"\"{m}:{mapped[m]}\""))}]," +
-                     $"\"rig_errors\":{rigErrors.Count}}}";
+                     $"\"rig_errors\":{rigErrors.Count},\"anim_warnings\":{(animWarnings.Length > 0).ToString().ToLower()}}}";
+        if (animWarnings.Length > 0) Debug.Log("[AvatarCheck] animation warnings: " + animWarnings);
         foreach (var e in rigErrors) Debug.Log("[AvatarCheck] rig error: " + e);
         File.WriteAllText(Path.Combine(Directory.GetCurrentDirectory(), "avatar_report.json"), report);
         Debug.Log("[AvatarCheck] " + report);
