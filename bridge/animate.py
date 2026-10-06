@@ -11,7 +11,7 @@ import bpy
 from bpy_extras import anim_utils
 from mathutils import Matrix, Vector
 
-from ..core import locomotion
+from ..core import locomotion, poseclip
 
 START_FRAME = 1
 # 키를 넣는 IK 컨트롤의 부모 전환 속성 (1 = Root)
@@ -26,6 +26,24 @@ def measure(rig):
     leg = (mw @ b["DEF-thigh.L"].head_local - mw @ b["DEF-foot.L"].head_local).length
     arm = (mw @ b["DEF-upper_arm.L"].head_local - mw @ b["DEF-hand.L"].head_local).length
     return leg, arm
+
+
+def measure_body(rig, facing="-Y"):
+    """포즈 클립용 실측: 다리·팔 길이와 손 IK 레스트 → 어깨 오프셋(캐릭터 기준), 손 레스트 높이."""
+    leg, arm = measure(rig)
+    mw = rig.matrix_world
+    b = rig.data.bones
+    left, front, up = char_axes(facing)
+    shoulder, hand_height, pivot = {}, {}, {}
+    torso = mw @ b["torso"].head_local
+    for side in ("L", "R"):
+        hand = mw @ b[f"hand_ik.{side}"].head_local
+        d = (mw @ b[f"DEF-upper_arm.{side}"].head_local) - hand
+        shoulder[side] = (d.dot(left), d.dot(front), d.dot(up))
+        hand_height[side] = hand.z
+        pv = torso - hand
+        pivot[side] = (pv.dot(left), pv.dot(front), pv.dot(up))
+    return poseclip.Body(leg, arm, shoulder, hand_height, pivot)
 
 
 def char_axes(facing):

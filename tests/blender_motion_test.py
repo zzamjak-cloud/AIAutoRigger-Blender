@@ -189,6 +189,12 @@ for name in ("punch", "axe_overhead_2h", "wave", "sit_down", "dance", "kick"):
     else:
         a, b = pose_at(1 + n), pose_at(1 + 2 * n)
         check(max_diff(a, b) < 1e-4 and not action.use_cyclic, f"사전 {name}: 끝 자세 유지")
+    if name == "punch":
+        # 손은 어깨 기준 좌표라 타격 때 손이 어깨 높이로 뻗는다 (레스트 손 높이와 무관)
+        strike = 1 + round(0.45 * n)
+        dz = world("hand_ik.R", strike).z - world("DEF-upper_arm.R", strike).z
+        fwd = (world("hand_ik.R", strike) - world("DEF-upper_arm.R", strike)).length
+        check(abs(dz) < 0.12 and fwd > 0.8 * animate.measure(rig)[1], f"사전 punch: 타격 손 높이 차 {100 * dz:.0f}cm, 어깨에서 {100 * fwd:.0f}cm")
     if name in ("punch", "wave", "dance"):
         moved = max((world("DEF-toe.L", f) - world("DEF-toe.L", 1)).length for f in range(1, n + 1, 3))
         check(moved < 1e-4, f"사전 {name}: 발 고정")

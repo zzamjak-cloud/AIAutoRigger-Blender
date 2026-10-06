@@ -35,16 +35,16 @@ def library():
     return poseclip.load_library(library_dir())
 
 
-def build(params, leg, arm):
+def build(params, body):
     """GaitParams 또는 ClipParams → Motion."""
     if isinstance(params, poseclip.ClipParams):
-        return poseclip.to_motion(params, leg, arm)
-    return locomotion.generate(params, leg, arm)
+        return poseclip.to_motion(params, body)
+    return locomotion.generate(params, body.leg, body.arm)
 
 
 def _apply(context, rig, facing, params, label, name=None):
-    leg, arm = animate.measure(rig)
-    motion = build(params, leg, arm)
+    body = animate.measure_body(rig, facing)
+    motion = build(params, body)
     context.scene.airig.anim_facts = locomotion.facts(motion, context.scene.render.fps)
     name = name or f"{rig.name}_{params.name}_{label}"
     action = animate.apply_motion(context, rig, motion, name, facing)
@@ -132,10 +132,10 @@ class AIRIG_OT_save_motion_library(bpy.types.Operator):
             self.report({"ERROR"}, "저장할 생성 애니메이션이 없습니다. 먼저 동작을 만드세요.")
             return {"CANCELLED"}
         try:
-            rig, _mesh, _facing = _targets(context)
+            rig, _mesh, facing = _targets(context)
             params = params_from_action(action)
-            leg, arm = animate.measure(rig)
-            clip = params.clip if isinstance(params, poseclip.ClipParams) else poseclip.from_motion(build(params, leg, arm), leg, arm, "x")
+            body = animate.measure_body(rig, facing)
+            clip = params.clip if isinstance(params, poseclip.ClipParams) else poseclip.from_motion(build(params, body), body, "x")
             clip = dict(clip, name=state.anim_library_name.strip())
             entry = poseclip.Entry(poseclip.clamp(clip)["name"], state.anim_library_desc.strip() or state.anim_prompt.strip(), poseclip.clamp(clip))
             path = poseclip.save_entry(library_dir(), entry)

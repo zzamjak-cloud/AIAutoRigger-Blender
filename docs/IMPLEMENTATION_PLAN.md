@@ -171,4 +171,6 @@ scripts/                 dev_run.{sh,ps1,bat}, dev_bootstrap.py, build.sh
 - 응답 스키마는 `mode` + nullable `params`/`clip` 하나로 둔다(Codex `--output-schema` 는 strict 라 모든 속성이 required 여야 하고 `anyOf` 분기보다 `["object","null"]` 이 안전). 클립 키의 컨트롤도 nullable 로 두어 희소 키를 표현한다.
 - `from_motion` 으로 어떤 생성 결과든 클립으로 되돌릴 수 있다(채널 값이 이미 캐릭터 기준 m/도). 손은 몸통 이동을 빼고, 루프는 t≥1 복제 키를 버리며, 키가 12개를 넘으면 간격이 좁은 키부터 버린다. 키 단위 ease 는 컨트롤이 공유하므로 걷기 저장 시 접지 선형이 몸통에도 걸린다(허용).
 - 루프 클립은 채널이 t=0 키 없이 시작해도 되므로(`_close` 가 닫음) 단발에만 t=0 레스트 키를 넣는다. 루프에도 넣으면 걷기 왕복 변환이 어긋났다.
+- **손 좌표는 어깨 기준이어야 한다 (0.7.1)**: 레스트 손 기준 오프셋은 사용자 좀비(손이 골반 옆에 매달림, 어깨→손 0.46 바깥·0.64 아래)에서 "up 0.5" 가 허리 높이로 끝나 휘두르기가 허리춤 흔들기로 보였다. `Body`(어깨 오프셋·손 높이·몸통 피벗, `bridge.animate.measure_body`)로 손 값을 어깨 기준 팔 길이 비율로 두고, 몸통 피벗을 중심으로 몸통 회전(`poseclip.rotate`, 브리지 `char_rotation` 과 같은 roll→pitch→yaw)을 따르게 했다. (side, fwd, up) 은 왼손 좌표계라 (right, fwd, up) 으로 바꿔 돌린다. 사망처럼 몸통이 88° 눕는 클립은 손을 이 표현으로 되돌리면 범위를 넘으므로 왕복 변환 테스트에서 뺐다.
+- 실제 Claude CLI 는 새 스키마(mode + nullable params/clip)로 29초 만에 CLIP 을 돌려줬고 사전(sword_slash)을 변형했다고 요약했다. Claude Code 세션 안에서 CLI 를 중첩 호출하려면 `CLAUDECODE` 환경 변수를 지워야 한다.
 - 공격 궤적은 `_attack_path` 가 (준비, 타격, 후속) 위치·손 회전을 돌려주고 나머지 몸통 처리는 공유한다. 세로 궤적(SLASH_V·OVERHEAD)은 비틀기 대신 숙임을 키운다. 양손은 반대 손을 공격 손 쪽으로 0.7×팔 길이 옮겨 붙인다(레스트 손 간격이 어깨 폭이라 그만큼 보정).

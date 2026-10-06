@@ -14,7 +14,8 @@ AI 가 값을 잘못 써도 캐릭터가 바닥을 뚫거나 루프가 끊기지
                "hand_R": {"side": 0.1, "fwd": 0.9, "up": 0.3, "pitch": 0, "roll": 0, "yaw": 0}, ...}]}
 - 키에서 null 인 컨트롤은 그 시점에 키를 두지 않는다 (다른 키 사이를 베지어로 지나간다).
 - "rest": true 는 모든 컨트롤을 그 시점에 레스트(0)로 둔다.
-- 손 위치는 움직이는 몸통 기준이다 (몸통 이동이 더해진다).
+- 손 위치는 어깨 기준 팔 길이 비율이다 (|벡터| ≤ 1 이면 닿는다). 레스트 손 위치가 캐릭터마다 달라도(A-포즈, 팔 내림)
+  "fwd 0.9, up 0" 은 언제나 어깨 높이로 뻗은 손이 된다. 몸통이 움직이면 어깨도 함께 움직이므로 몸통 이동이 더해진다.
 - 발은 up == 0 이면 땅에 닿은 것이고, 접지 키 사이는 선형이라 미끄러지지 않는다. 키가 없는 발은 제자리에 고정된다.
 """
 
@@ -50,9 +51,79 @@ RANGES = {
     "hand": {"side": (-1.0, 1.0), "fwd": (-1.0, 1.0), "up": (-1.3, 1.2), "pitch": (-90.0, 90.0), "roll": (-90.0, 90.0), "yaw": (-90.0, 90.0)},
     "foot": {"side": (-0.5, 0.5), "fwd": (-0.8, 0.8), "up": (0.0, 1.0), "pitch": (-70.0, 70.0), "roll": (-30.0, 30.0), "yaw": (-45.0, 45.0), "heel": (-45.0, 45.0)},
 }
-# 바닥 관통 방지 (m, 다리 길이 비율): 몸통 레스트 높이 ≈ 1.1×다리, 손 레스트 높이 ≈ 골반
+# 바닥 관통 방지 (다리 길이 비율): 몸통 레스트 높이 ≈ 1.1×다리
 TORSO_FLOOR = -0.92
-HAND_FLOOR = -0.94
+HAND_CLEARANCE = 0.04  # 손이 바닥 위로 남기는 여유 (m)
+
+
+@dataclass
+class Body:
+    """리그 실측 (m). shoulder 는 손 IK 레스트 위치에서 어깨까지의 캐릭터 기준 (side, fwd, up) 오프셋,
+    hand_height 는 손 IK 레스트의 바닥 높이."""
+
+    leg: float
+    arm: float
+    shoulder: dict  # {"L": (side, fwd, up), "R": (...)}
+    hand_height: dict  # {"L": m, "R": m}
+    pivot: dict | None = None  # 손 IK 레스트 → 몸통(torso) 피벗 오프셋. 없으면 어깨 바로 아래 손 높이로 본다
+
+    def __post_init__(self):
+        if self.pivot is None:
+            self.pivot = {s: (sh[0], 0.0, 0.0) for s, sh in self.shoulder.items()}
+
+    @classmethod
+    def approx(cls, leg: float, arm: float) -> "Body":
+        """실측이 없을 때(단위 테스트·변환 전용) A-포즈 근사: 손은 어깨에서 바깥 0.5·아래 0.85 팔 길이."""
+        return cls(leg, arm, {"L": (-0.5 * arm, 0.0, 0.85 * arm), "R": (0.5 * arm, 0.0, 0.85 * arm)},
+                   {"L": 1.05 * leg, "R": 1.05 * leg})
+
+
+def rotate(v: tuple, pitch: float, roll: float, yaw: float, inverse: bool = False) -> tuple:
+    """캐릭터 기준 (side, fwd, up) 벡터를 몸통 회전(도)으로 돌린다. 브리지 char_rotation 과 같은 순서(roll → pitch → yaw).
+
+    (side, fwd, up) 은 왼손 좌표계라 (right, fwd, up) 으로 바꿔 계산한다. pitch>0 앞으로 숙임, roll>0 오른쪽, yaw>0 왼쪽.
+    """
+    from math import cos, radians, sin
+
+    def rx(a, x, y, z):
+        c, s = cos(a), sin(a)
+        return x, y * c - z * s, y * s + z * c
+
+    def ry(a, x, y, z):
+        c, s = cos(a), sin(a)
+        return x * c + z * s, y, -x * s + z * c
+
+    def rz(a, x, y, z):
+        c, s = cos(a), sin(a)
+        return x * c - y * s, x * s + y * c, z
+
+    x, y, z = -v[0], v[1], v[2]
+    p, r, w = radians(pitch), radians(roll), radians(yaw)
+    if inverse:
+        x, y, z = rz(-w, x, y, z)
+        x, y, z = rx(p, x, y, z)
+        x, y, z = ry(-r, x, y, z)
+    else:
+        x, y, z = ry(r, x, y, z)
+        x, y, z = rx(-p, x, y, z)
+        x, y, z = rz(w, x, y, z)
+    return (-x, y, z)
+
+
+def _hand_offset(u: tuple, torso_t: tuple, torso_r: tuple, pivot: tuple) -> tuple:
+    """손 레스트 기준 오프셋(몸통 레스트 자세, m) u → 몸통이 이동·회전한 뒤의 레스트 기준 오프셋.
+
+    손 IK 는 Root 를 따르므로 어깨가 몸통과 함께 돌도록 몸통 피벗을 중심으로 돌리고 몸통 이동을 더한다.
+    """
+    rel = tuple(a - b for a, b in zip(u, pivot))
+    rot = rotate(rel, *torso_r)
+    return tuple(t + r + pv for t, r, pv in zip(torso_t, rot, pivot))
+
+
+def _hand_offset_inverse(off: tuple, torso_t: tuple, torso_r: tuple, pivot: tuple) -> tuple:
+    rel = tuple(o - t - pv for o, t, pv in zip(off, torso_t, pivot))
+    rot = rotate(rel, *torso_r, inverse=True)
+    return tuple(r + pv for r, pv in zip(rot, pivot))
 
 
 def _ranges(control: str) -> dict:
@@ -137,10 +208,19 @@ class ClipParams:
         return {"motion": "CLIP", "cycle_frames": self.cycle_frames, "root_motion": self.root_motion, "clip": self.clip}
 
 
-def _values(control: str, v: dict, leg: float, arm: float) -> tuple[tuple, tuple, float | None]:
-    """(위치 m, 회전 도, 발 굴림 도)."""
-    scale = arm if control.startswith("hand") else leg
-    loc = tuple(v[f] * scale for f in LOC_FIELDS) if "side" in FIELDS[control] else ()
+def _values(control: str, v: dict, body: Body, rest: bool) -> tuple[tuple, tuple, float | None]:
+    """(위치 m — 레스트 기준 오프셋, 회전 도, 발 굴림 도). 손은 어깨 기준 값을 레스트 기준으로 바꾼다."""
+    if control.startswith("hand"):
+        # 어깨 기준 값 → 몸통이 레스트일 때의 손 레스트 기준 오프셋 (몸통 이동·회전은 to_motion 이 나중에 더한다)
+        if rest:
+            loc = (0.0, 0.0, 0.0)
+        else:
+            sh = body.shoulder[control[-1]]
+            loc = tuple(s + v[f] * body.arm for s, f in zip(sh, LOC_FIELDS))
+    elif "side" in FIELDS[control]:
+        loc = tuple(v[f] * body.leg for f in LOC_FIELDS)
+    else:
+        loc = ()
     rot = tuple(v[f] for f in ROT_FIELDS)
     heel = v.get("heel") if control.startswith("foot") else None
     return loc, rot, heel
@@ -156,25 +236,25 @@ def _finish(keys: list[L.Key], loop: bool) -> list[L.Key]:
     return L._hold(keys)
 
 
-def to_motion(p: ClipParams, leg: float, arm: float) -> L.Motion:
-    """클립 → 키 채널. 손은 몸통 이동을 따르고, 발 접지 키 사이는 선형이다."""
+def to_motion(p: ClipParams, body: Body) -> L.Motion:
+    """클립 → 키 채널. 손은 어깨 기준 값을 레스트 기준으로 바꾼 뒤 몸통 이동을 따르고, 발 접지 키 사이는 선형이다."""
     clip = p.clip
     loop = clip["loop"]
+    leg = body.leg
     per: dict[tuple[str, str], list[L.Key]] = {}
     for key in clip["keys"]:
         t = key["t"]
         for c in CONTROLS:
             v = key[c]
-            if v is None and key["rest"]:
+            rest = v is None and key["rest"]
+            if rest:
                 v = {f: 0.0 for f in FIELDS[c]}
             if v is None:
                 continue
-            loc, rot, heel = _values(c, v, leg, arm)
+            loc, rot, heel = _values(c, v, body, rest)
             if loc:
                 if c == "torso":
                     loc = (loc[0], loc[1], max(loc[2], TORSO_FLOOR * leg))
-                elif c.startswith("hand"):
-                    loc = (loc[0], loc[1], max(loc[2], HAND_FLOOR * leg))
                 per.setdefault((c, "loc"), []).append(L.Key(t, loc, key["ease"]))
             per.setdefault((c, "rot"), []).append(L.Key(t, rot, key["ease"]))
             if heel is not None:
@@ -186,18 +266,39 @@ def to_motion(p: ClipParams, leg: float, arm: float) -> L.Motion:
             if a.value[2] == 0.0 and b.value[2] == 0.0:
                 a.interp = L.LINEAR
     torso_loc = _finish(per[("torso", "loc")], loop) if ("torso", "loc") in per else None
+    torso_rot = _finish(per[("torso", "rot")], loop) if ("torso", "rot") in per else None
+    zero3 = (0.0, 0.0, 0.0)
+
+    def torso_at(t):
+        return (L.sample(torso_loc, t) if torso_loc else zero3, L.sample(torso_rot, t) if torso_rot else zero3)
+
     channels: list[L.Channel] = []
     for (c, kind), keys in per.items():
-        if c.startswith("hand") and kind == "loc" and torso_loc is not None:
-            keys = L._follow(keys, torso_loc)
-            # 몸통 키 시점에도 손 키를 둬야 몸이 움직일 때 손이 뒤처지지 않는다
+        if c.startswith("hand") and kind == "loc":
+            # 손: 몸통 피벗을 중심으로 몸통 회전을 따라 돌리고 몸통 이동을 더한다. 몸통 키 시점에도 손 키를 둬야
+            # 몸이 움직일 때 손이 뒤처지지 않는다
+            raw = _finish(list(keys), loop)
+            ease = {round(k.t, 6): k.interp for k in keys}
             times = {round(k.t, 6) for k in keys}
-            for tk in torso_loc[:-1] if loop else torso_loc:
-                if round(tk.t, 6) not in times and 0.0 <= tk.t <= 1.0:
-                    base = L.sample(_finish(list(per[(c, kind)]), loop), tk.t)
-                    keys.append(L.Key(tk.t, tuple(x + y for x, y in zip(base, tk.value))))
+            for src in (torso_loc, torso_rot):
+                for tk in (src[:-1] if loop else src) if src else ():
+                    if 0.0 <= tk.t <= 1.0:
+                        times.add(round(tk.t, 6))
+            side = c[-1]
+            out = []
+            for t in sorted(times):
+                tl, tr = torso_at(t)
+                off = _hand_offset(L.sample(raw, t), tl, tr, body.pivot[side])
+                off = (off[0], off[1], max(off[2], HAND_CLEARANCE - body.hand_height[side]))
+                out.append(L.Key(t, off, ease.get(t, L.BEZIER)))
+            keys = out
         bone = HEEL_BONES[c] if kind == "roll" else BONES[c]
-        finished = torso_loc if (c == "torso" and kind == "loc") else _finish(keys, loop)
+        if c == "torso" and kind == "loc":
+            finished = torso_loc
+        elif c == "torso" and kind == "rot":
+            finished = torso_rot
+        else:
+            finished = _finish(keys, loop)
         channels.append(L.Channel(bone, kind, finished))
     distance = clip["root_distance"] * leg if p.root_motion else 0.0
     if distance > 0.0:
@@ -205,10 +306,13 @@ def to_motion(p: ClipParams, leg: float, arm: float) -> L.Motion:
     return L.Motion(p, channels, distance)
 
 
-def from_motion(m: L.Motion, leg: float, arm: float, name: str) -> dict:
-    """키 채널 → 클립 (사전 저장용). 손은 몸통 이동을 빼서 몸통 기준으로 되돌린다."""
+def from_motion(m: L.Motion, body: Body, name: str) -> dict:
+    """키 채널 → 클립 (사전 저장용). 손은 몸통 이동을 빼고 어깨 기준 팔 길이 비율로 되돌린다."""
     loop = m.loop
+    leg, arm = body.leg, body.arm
     torso_loc = next((c.keys for c in m.channels if c.bone == "torso" and c.kind == "loc"), None)
+    torso_rot = next((c.keys for c in m.channels if c.bone == "torso" and c.kind == "rot"), None)
+    zero3 = (0.0, 0.0, 0.0)
     by_time: dict[float, dict] = {}
     by_bone = {v: k for k, v in BONES.items()}
     by_heel = {v: k for k, v in HEEL_BONES.items()}
@@ -231,8 +335,11 @@ def from_motion(m: L.Motion, leg: float, arm: float, name: str) -> dict:
                 v.update(zip(ROT_FIELDS, k.value))
             else:
                 val = k.value
-                if control.startswith("hand") and torso_loc is not None:
-                    val = tuple(x - y for x, y in zip(val, L.sample(torso_loc, k.t)))
+                if control.startswith("hand"):
+                    tl = L.sample(torso_loc, k.t) if torso_loc else zero3
+                    tr = L.sample(torso_rot, k.t) if torso_rot else zero3
+                    val = _hand_offset_inverse(val, tl, tr, body.pivot[control[-1]])
+                    val = tuple(x - s for x, s in zip(val, body.shoulder[control[-1]]))
                 scale = arm if control.startswith("hand") else leg
                 v.update(zip(LOC_FIELDS, (x / scale for x in val)))
             key[control] = v
