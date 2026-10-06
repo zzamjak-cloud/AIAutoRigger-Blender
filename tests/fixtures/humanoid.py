@@ -14,6 +14,8 @@ VARIANTS = {
     "realistic_a": dict(head=1.0, leg=1.0, arm=1.0, arm_angle=40.0),
     # 과장 비율: 큰 머리, 짧은 다리·팔
     "stylized_t": dict(head=2.0, leg=0.6, arm=0.75, arm_angle=0.0),
+    # 비만 A-포즈: 넓은 몸통, 어깨 살에 묻힌 목, 발보다 깊은 굵은 다리
+    "fat_a": dict(head=1.0, leg=0.8, arm=0.8, arm_angle=30.0, fat=True),
 }
 # 손가락 변형 (엄지 + 손가락 3개). 손은 별도 섬(hand_parts)으로 만들어 더 촘촘히 리메시한다
 FINGER_VARIANTS = {
@@ -145,18 +147,22 @@ def build_from(cfg: dict, split_hands: bool = False):
     torso_top = hip_z + 0.65
     head_h = 0.22 * cfg["head"]
     head_hw = 0.1 * cfg["head"]
+    fat = cfg.get("fat", False)
+    # 비만형은 다리가 굵어 가랑이 틈을 남기려고 다리 간격을 벌린다
+    leg_x, thigh_w, shin_w = (0.17, 0.22, 0.2) if fat else (0.1, 0.12, 0.1)
+    torso_hw, torso_hd = (0.3, 0.25) if fat else (0.17, 0.1)
 
     gt = {}
     parts = []
     hand_boxes = []
     for name, s in (("L", 1.0), ("R", -1.0)):
-        hip = (s * 0.1, 0.0, hip_z)
-        knee = (s * 0.1, 0.0, 0.08 + 0.5 * leg_len)
-        ankle = (s * 0.1, 0.0, 0.08)
-        parts.append(_segment_box(hip, knee, 0.12))
-        parts.append(_segment_box(knee, ankle, 0.1))
-        parts.append(_box((s * 0.1, -0.06, 0.04), (0.05, 0.12, 0.04)))
-        shoulder = (s * 0.19, 0.0, torso_top - 0.08)
+        hip = (s * leg_x, 0.0, hip_z)
+        knee = (s * leg_x, 0.0, 0.08 + 0.5 * leg_len)
+        ankle = (s * leg_x, 0.0, 0.08)
+        parts.append(_segment_box(hip, knee, thigh_w))
+        parts.append(_segment_box(knee, ankle, shin_w))
+        parts.append(_box((s * leg_x, -0.06, 0.04), (0.07 if fat else 0.05, 0.13 if fat else 0.12, 0.04)))
+        shoulder = (s * (torso_hw if fat else 0.19), 0.0, torso_top - 0.08)
         ang = radians(cfg["arm_angle"])
         direction = (s * cos(ang), 0.0, -sin(ang))
         arm_len = 0.7 * cfg["arm"]
@@ -180,10 +186,19 @@ def build_from(cfg: dict, split_hands: bool = False):
             f"hand_tip_{name}": tip,
         })
     # 골반이 다리 상단을 덮도록 몸통을 hip 아래까지 내린다
-    parts.append(_box((0.0, 0.0, 0.5 * (hip_z - 0.06 + torso_top)), (0.17, 0.1, 0.5 * (torso_top - hip_z + 0.06))))
-    parts.append(_box((0.0, 0.0, torso_top + 0.04), (0.05, 0.05, 0.04)))
-    head_base = torso_top + 0.08
-    parts.append(_box((0.0, 0.0, head_base + head_h / 2), (head_hw, 0.11 * cfg["head"], head_h / 2)))
+    parts.append(_box((0.0, 0.0, 0.5 * (hip_z - 0.06 + torso_top)), (torso_hw, torso_hd, 0.5 * (torso_top - hip_z + 0.06))))
+    if fat:
+        # 목 없이 어깨 살이 머리 아랫부분을 감싸며 좁아지고, 정수리는 머리보다 좁다
+        head_base = torso_top + 0.02
+        parts.append(_box((0.0, 0.05, torso_top + 0.025), (0.24, 0.2, 0.025)))
+        parts.append(_box((0.0, 0.05, torso_top + 0.075), (0.16, 0.16, 0.025)))
+        body_h = head_h - 0.05
+        parts.append(_box((0.0, 0.0, head_base + body_h / 2), (head_hw, 0.11 * cfg["head"], body_h / 2)))
+        parts.append(_box((0.0, 0.0, head_base + body_h + 0.025), (0.07, 0.08, 0.025)))
+    else:
+        parts.append(_box((0.0, 0.0, torso_top + 0.04), (0.05, 0.05, 0.04)))
+        head_base = torso_top + 0.08
+        parts.append(_box((0.0, 0.0, head_base + head_h / 2), (head_hw, 0.11 * cfg["head"], head_h / 2)))
     gt["head_base"] = (0.0, 0.0, head_base)
     gt["head_top"] = (0.0, 0.0, head_base + head_h)
 

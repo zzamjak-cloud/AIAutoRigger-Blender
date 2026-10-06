@@ -54,6 +54,11 @@ class BipedLandmarkTest(unittest.TestCase):
     def test_stylized_proportions(self):
         self._run("stylized_t")
 
+    def test_fat_buried_neck(self):
+        # 목이 어깨 살에 묻혀도 정수리를 목으로 오인하지 않고, 굵은 다리에서도 발목이 발등 위에 온다
+        r = self._run("fat_a")
+        self.assertGreater(r.joints["head_top"][2] - r.joints["head_base"][2], 0.5 * 0.22)
+
     def test_facing_plus_y(self):
         r = self._run("realistic_t", flip=True)
         self.assertEqual(r.facing, "+Y")

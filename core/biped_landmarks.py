@@ -24,6 +24,12 @@ GAP_RATIO = 0.02
 ARM_VOXEL_RATIO = 0.02
 # IK 극(pole) 방향을 확정하기 위한 무릎·팔꿈치 굽힘 오프셋 (분절 길이 대비)
 BEND_RATIO = 0.03
+# 목 판정: 위쪽 머리 단면이 목 단면보다 이 배수 이상 넓어야 한다
+NECK_BULGE = 1.08
+# 목이 묻힌 체형에서 머리 높이 = 머리 폭 × 이 비율
+HEAD_HEIGHT_RATIO = 1.0
+# 발등 높이 판정: 발끝 돌출이 이 비율 이상 정강이 쪽으로 물러난 첫 단면
+FOOT_TOP_RETREAT = 0.7
 SIDES = (("L", 1.0), ("R", -1.0))
 
 
@@ -129,6 +135,46 @@ def _band_centroid(pts: list[Point], origin: Point, axis: Point, length: float, 
     return _centroid(sel) if sel else None
 
 
+def _foot_top_z(leg_slices: list[tuple[int, _Interval]], z_of, zmin: float, leg_len: float) -> float | None:
+    """발끝(-Y) 돌출이 정강이 앞면 쪽으로 대부분 물러나는 첫 높이. 발 돌출이 뚜렷하지 않으면 None."""
+    fronts = [(z_of(k), min(p[1] for p in iv.points)) for k, iv in leg_slices]
+    toe = [f for z, f in fronts if z - zmin < 0.1 * leg_len]
+    shin = [f for z, f in fronts if 0.1 * leg_len <= z - zmin <= 0.35 * leg_len]
+    if not toe or not shin:
+        return None
+    toe_front = min(toe)
+    protrusion = max(shin) - toe_front
+    if protrusion < 0.05 * leg_len:
+        return None
+    for z, f in fronts:
+        if z - zmin > 0.02 * leg_len and f >= toe_front + FOOT_TOP_RETREAT * protrusion:
+            return z
+    return None
+
+
+def _buried_head(slices: list[list[_Interval]], neck_ks: list[int], w: dict[int, float], cx: float, zmax: float, z_of):
+    """목이 보이지 않을 때 (머리 시작 높이, 머리 중심 y).
+
+    어깨에서 머리로 가파르게 좁아지다 머리 폭에서 완만해지는 꺾임점 위를 머리로 보고,
+    머리 폭에 비례한 머리 높이로 시작 높이를 정한다. 머리 아랫부분은 어깨 살 단면에 묻혀 있다.
+    """
+    m = 3
+    scored = [k for k in neck_ks if k - m in w and k + m in w]
+    if scored:
+        k_e = max(scored, key=lambda k: (w[k - m] - w[k]) - (w[k] - w[k + m]))
+    else:
+        k_e = neck_ks[0]
+    above = [k for k in neck_ks if k > k_e] or [neck_ks[-1]]
+    head_w = median(w[k] for k in above)
+    head_base_z = min(max(zmax - HEAD_HEIGHT_RATIO * head_w, z_of(neck_ks[0])), z_of(k_e))
+    centers = []
+    for k in above:
+        ys = [p[1] for p in _central(slices[k], cx).points if abs(p[0] - cx) <= 0.5 * head_w]
+        if ys:
+            centers.append(0.5 * (max(ys) + min(ys)))
+    return head_base_z, (median(centers) if centers else None)
+
+
 def estimate_biped(points: Sequence[Sequence[float]], symmetric: bool = True) -> BipedLandmarks:
     pts: list[Point] = [(p[0], p[1], p[2]) for p in points]
     if len(pts) < 500:
@@ -216,6 +262,10 @@ def estimate_biped(points: Sequence[Sequence[float]], symmetric: bool = True) ->
             if z_of(k) - zmin > 0.02 * leg_len and depth(iv) <= 1.4 * mid_depth:
                 ankle_z = min(max(z_of(k), zmin + 0.04 * leg_len), zmin + 0.25 * leg_len)
                 break
+        # 굵은 다리는 발보다 깊어 깊이 기준이 바닥 근처에서 멈춘다. 발끝 돌출이 끝나는 높이(발등 위)로 보정한다
+        foot_top = _foot_top_z(leg_slices, z_of, zmin, leg_len)
+        if foot_top is not None:
+            ankle_z = min(max(ankle_z, foot_top), zmin + 0.25 * leg_len)
 
         hip_z = crotch_z + 0.1 * leg_len
         top = [iv for k, iv in leg_slices if k >= k_c - 2] or [leg_slices[-1][1]]
@@ -298,9 +348,19 @@ def estimate_biped(points: Sequence[Sequence[float]], symmetric: bool = True) ->
     k_lo = k_of(max(arm_tops) + dz)
     k_hi = k_of(zmax - 0.05 * (zmax - shoulder_z))
     neck_ks = [k for k in range(k_lo, k_hi) if slices[k]]
+    head_y = None
     if neck_ks:
-        k_neck = min(neck_ks, key=lambda k: _central(slices[k], cx).width)
-        head_base_z = z_of(k_neck)
+        raw = {k: _central(slices[k], cx).width for k in range(max(0, k_lo - 1), min(n, k_hi + 1)) if slices[k]}
+        # 표본이 성긴 단면은 폭이 작게 재지므로 이웃 단면과의 최댓값으로 잡음을 누른다
+        w = {k: max(raw.get(j, 0.0) for j in (k - 1, k, k + 1)) for k in neck_ks}
+        # 위쪽에 머리가 다시 넓어지는 잘록한 단면만 목으로 본다 (정수리의 좁은 단면 배제)
+        necked = [k for k in neck_ks if max((w[j] for j in neck_ks if j > k), default=0.0) >= NECK_BULGE * w[k]]
+        if necked:
+            head_base_z = z_of(min(necked, key=lambda k: w[k]))
+        else:
+            # 목이 어깨 살에 묻혀 단면이 정수리까지 줄기만 하는 체형(비만 등)
+            head_base_z, head_y = _buried_head(slices, neck_ks, w, cx, zmax, z_of)
+            warnings.append("목의 잘록한 부분이 없어 머리 크기로 머리 시작 높이를 추정했습니다.")
     else:
         warnings.append("목 위치를 찾지 못해 비율로 가정했습니다.")
         head_base_z = shoulder_z + 0.3 * (zmax - shoulder_z)
@@ -317,6 +377,10 @@ def estimate_biped(points: Sequence[Sequence[float]], symmetric: bool = True) ->
     for nm, z in (("neck_mid", 0.5 * (neck_base_z + head_base_z)), ("head_base", head_base_z)):
         yc, _ = torso_center(z)
         joints[nm] = (cx, yc, z)
+    if head_y is not None:
+        # 묻힌 목 높이의 단면은 등 살까지 포함하므로 머리 중심 깊이를 쓴다
+        joints["head_base"] = (cx, head_y, head_base_z)
+        joints["neck_mid"] = (cx, 0.5 * (joints["neck_base"][1] + head_y), joints["neck_mid"][2])
     yc, _ = torso_center(zmax - 0.1 * (zmax - head_base_z))
     joints["head_top"] = (cx, yc, zmax)
 
