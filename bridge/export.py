@@ -2,7 +2,8 @@
 
 Rigify 의 DEF 본은 허벅지·어깨 등이 디폼 부모 없이 떨어져 있어 Unity Humanoid 계층으로 쓸 수 없다.
 DEF 본만 복제한 게임 아마추어를 만들어 ORG 계층을 따라 다시 부모를 잇고, Copy Transforms 로
-컨트롤 리그를 따라가게 한 뒤 메시 복제본과 함께 내보낸다(애니메이션은 FBX 내보내기에서 굽는다).
+컨트롤 리그를 따라가게 한 뒤 메시 복제본과 함께 내보낸다. 애니메이션은 리그의 NLA 액션(과 활성 액션)마다
+게임 아마추어에 구워 액션 이름의 NLA 스트립으로 올리고, FBX 에는 스트립마다 같은 이름의 테이크로 담는다.
 """
 
 import json
@@ -213,15 +214,106 @@ def remove_game_objects():
             bpy.data.armatures.remove(data)
         elif isinstance(data, bpy.types.Mesh) and data.users == 0:
             bpy.data.meshes.remove(data)
+    for a in [a for a in bpy.data.actions if a.get(GAME_TAG)]:
+        bpy.data.actions.remove(a)
+
+
+def export_actions(rig):
+    """내보낼 (액션, 슬롯) 목록: NLA 트랙·스트립 순서대로, 이어서 NLA 에 없는 활성 액션. 같은 액션은 한 번만.
+
+    뮤트된 트랙·스트립도 포함한다 (NLA 에서 하나만 미리 보려고 뮤트해 둔 경우가 많다).
+    """
+    ad = rig.animation_data
+    if ad is None:
+        return []
+    found = []
+    for track in ad.nla_tracks:
+        for strip in track.strips:
+            if strip.action is not None and all(strip.action != a for a, _s in found):
+                found.append((strip.action, getattr(strip, "action_slot", None)))
+    if ad.action is not None and all(ad.action != a for a, _s in found):
+        found.append((ad.action, getattr(ad, "action_slot", None)))
+    return found
+
+
+def _bake_actions(context, rig, game, actions):
+    """리그 액션마다 게임 아마추어의 시각 포즈(제약 결과)를 키로 구워 액션 이름의 NLA 스트립으로 올린다.
+
+    굽는 동안 리그 NLA 를 끄고 액션을 하나씩 활성으로 둔다. 다 구우면 제약을 지워 스트립만으로 움직이게 한다.
+    """
+    scene = context.scene
+    ad = rig.animation_data
+    saved = (ad.action, getattr(ad, "action_slot", None), ad.use_nla, ad.use_tweak_mode, scene.frame_current)
+    if ad.use_tweak_mode:
+        ad.use_tweak_mode = False
+    ad.use_nla = False
+    game.animation_data_create()
+    bones = list(game.pose.bones)
+    for pb in bones:
+        pb.rotation_mode = "QUATERNION"
+    baked = []
+    try:
+        for action, slot in actions:
+            ad.action = action
+            if slot is not None:
+                try:
+                    ad.action_slot = slot
+                except (TypeError, RuntimeError):
+                    pass
+            start, end = (int(round(v)) for v in action.frame_range)
+            out = bpy.data.actions.new(f"{action.name}_game")
+            out[GAME_TAG] = True
+            game.animation_data.action = out
+            prev_q = {}
+            for frame in range(start, max(start, end) + 1):
+                scene.frame_set(frame)
+                # 키를 넣으면 포즈가 바뀌므로 모든 본의 로컬 행렬을 먼저 읽는다
+                local = [(pb, game.convert_space(pose_bone=pb, matrix=pb.matrix, from_space="POSE", to_space="LOCAL"))
+                         for pb in bones]
+                for pb, m in local:
+                    loc, q, scale = m.decompose()
+                    p = prev_q.get(pb.name)
+                    if p is not None and q.dot(p) < 0.0:
+                        q.negate()  # 보간이 반대 방향으로 돌지 않게 부호를 맞춘다
+                    prev_q[pb.name] = q
+                    pb.location, pb.rotation_quaternion, pb.scale = loc, q, scale
+                    for prop in ("location", "rotation_quaternion", "scale"):
+                        pb.keyframe_insert(prop, frame=frame, group=pb.name)
+            baked.append((action.name, start, out))
+    finally:
+        ad.action = saved[0]
+        if saved[1] is not None:
+            try:
+                ad.action_slot = saved[1]
+            except (TypeError, RuntimeError):
+                pass
+        ad.use_nla = saved[2]
+        if saved[3]:
+            ad.use_tweak_mode = True
+        scene.frame_set(saved[4])
+
+    game.animation_data.action = None
+    for pb in bones:
+        for c in list(pb.constraints):
+            pb.constraints.remove(c)
+        pb.matrix_basis.identity()
+    # 스트립 이름이 FBX 테이크 이름이 된다. 구간이 겹쳐도 되도록 액션마다 트랙을 따로 만든다
+    for name, start, out in baked:
+        track = game.animation_data.nla_tracks.new()
+        track.name = name
+        track.strips.new(name, start, out)
+    return [name for name, _start, _out in baked]
 
 
 def export_fbx(context, rig, metarig, mesh, filepath, naming="RIGIFY", bake_anim=True, simplify=False):
-    """FBX 와 (UNITY 이름일 때) Humanoid 매핑 JSON 을 쓴다. 반환: 내보낸 본 수."""
+    """FBX 와 (UNITY 이름일 때) Humanoid 매핑 JSON 을 쓴다. 반환: 내보낸 본 수.
+
+    bake_anim 이면 리그의 NLA 액션과 활성 액션을 액션 이름의 테이크로 모두 담는다.
+    """
     filepath = pathlib.Path(filepath)
     filepath.parent.mkdir(parents=True, exist_ok=True)
-    action = rig.animation_data.action if rig.animation_data else None
+    actions = export_actions(rig) if bake_anim else []
     scene = context.scene
-    saved_range = (scene.frame_start, scene.frame_end)
     saved_selection = [o for o in context.view_layer.objects if o is not None and o.select_get()]
     saved_active = context.view_layer.objects.active
     try:
@@ -241,13 +333,12 @@ def export_fbx(context, rig, metarig, mesh, filepath, naming="RIGIFY", bake_anim
             apply_scale_options="FBX_SCALE_ALL",
             axis_forward="-Z",
             axis_up="Y",
-            bake_anim=bake_anim and action is not None,
+            bake_anim=bool(actions),
         )
-        if kwargs["bake_anim"]:
-            # 게임 아마추어는 제약으로만 움직이므로 리그 액션 구간을 프레임 범위로 굽는다
-            start, end = action.frame_range
-            context.scene.frame_start, context.scene.frame_end = int(start), int(end)
-            kwargs.update(bake_anim_use_all_actions=False, bake_anim_use_nla_strips=False,
+        if actions:
+            # 제약으로 움직이는 게임 아마추어에 액션마다 구운 뒤, 스트립마다 테이크 하나로 내보낸다
+            _bake_actions(context, rig, game, actions)
+            kwargs.update(bake_anim_use_all_actions=False, bake_anim_use_nla_strips=True,
                           bake_anim_force_startend_keying=True, bake_anim_simplify_factor=0.0)
         bpy.ops.export_scene.fbx(**kwargs)
         if naming == "UNITY":
@@ -256,7 +347,6 @@ def export_fbx(context, rig, metarig, mesh, filepath, naming="RIGIFY", bake_anim
             filepath.with_suffix(".humanoid.json").write_text(json.dumps(mapping, indent=2), encoding="utf-8")
     finally:
         remove_game_objects()
-        scene.frame_start, scene.frame_end = saved_range
         for o in context.view_layer.objects:
             if o is not None:
                 o.select_set(o in saved_selection)

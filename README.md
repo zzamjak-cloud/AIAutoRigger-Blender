@@ -17,7 +17,7 @@
 | **Auto Rig** | AI 없이 휴리스틱만으로 메타리그 피팅 → Rigify 컨트롤 리그 → 자동 웨이트 |
 | **Fit Metarig** / **Generate Control Rig** | 위 과정을 나눠 실행 (생성 전 메타리그 수동 보정 가능) |
 | **AI Review Rig** | 테스트 포즈 렌더·변형 지표를 AI 가 라운드 방식으로 검토(필요하면 추가 포즈 렌더 요청)해 관절 이동·웨이트 스무딩 보정안을 제안. **체크한 항목만 Apply Selected 로 적용** |
-| **Export Game FBX** | DEF 본 계층을 정리한 게임용 FBX. 2족은 Unity Humanoid 이름 + 매핑 JSON, 4족은 Generic. 애니메이션은 DEF 본으로 굽는다. **Simplify Bones** 로 트위스트·손바닥·골반 본을 합쳐 본 수를 줄일 수 있다 |
+| **Export Game FBX** | DEF 본 계층을 정리한 게임용 FBX. 2족은 Unity Humanoid 이름 + 매핑 JSON, 4족은 Generic. 애니메이션은 DEF 본으로 굽고, NLA 에 올린 액션과 활성 액션을 액션 이름의 테이크로 모두 담는다. **Simplify Bones** 로 트위스트·손바닥·골반 본을 합쳐 본 수를 줄일 수 있다 |
 
 생성 리그는 Rigify 표준이므로 IK/FK 전환, 발 구르기, 폴 타깃 등은 Rigify 리그 UI 에서 사용한다. 팔다리는 IK 모드로 생성된다.
 
@@ -79,7 +79,7 @@ Attack 은 궤적 `attack_kind`(SWING 휘두르기 · THRUST 찌르기 · SLASH_
 - 키는 매 프레임이 아니라 동작 극점(접지·낮은 자세·교차·높은 자세)에만 들어간다. 커브당 최대 7개, Auto-Clamped 베지어, 루프는 Cycles 모디파이어로 반복한다. 단발 동작은 반복하지 않고 끝 키 값을 유지한다(점프·공격·피격은 레스트로 복귀, 사망은 누운 자세). 걷기 32프레임 기준 키 포즈 59개(매 프레임 방식은 352개)라 그래프 에디터에서 손으로 다듬기 쉽다.
 - 발이 땅을 딛는 구간만 선형 보간이라 미끄러지지 않고, 발 굴림은 Rigify `foot_heel_ik` 로 처리해 발끝이 바닥을 뚫지 않는다.
 - 결과는 `<리그>_<동작>_<스타일>` 액션(Fake User)으로 저장된다. 같은 이름으로 다시 만들면 교체되고, NLA 등 다른 곳에서 쓰는 액션은 `_old` 로 보존된다.
-- **Export Game FBX** 가 액션 구간을 그대로 구워 내보내므로 Unity 에서 Humanoid 클립으로 쓴다. 루프 동작은 Loop Time 을 켜고, 단발 동작은 끈다.
+- **Export Game FBX** 가 NLA 에 올린 액션(뮤트 포함)과 활성 액션을 각 액션 구간대로 구워 액션 이름의 테이크로 내보내므로 Unity 에서 Humanoid 클립으로 쓴다. 루프 동작은 Loop Time 을 켜고, 단발 동작은 끈다.
 
 ### Unity 로 내보내기
 

@@ -259,10 +259,26 @@ st.anim_root_motion = False
 bpy.ops.airig.generate_motion()
 n = int(bpy.data.actions[st.anim_action].frame_end - 1)
 bpy.context.view_layer.objects.active = obj
+walk_action = bpy.data.actions[st.anim_action]
+# NLA 에 올린 다른 액션(뮤트 포함)도 테이크로 함께 나가야 한다
+st.anim_motion = "JUMP"
+check(bpy.ops.airig.generate_motion() == {"FINISHED"}, "점프 생성 (NLA 용)")
+jump_action = bpy.data.actions[st.anim_action]
+ad = rig.animation_data
+ad.action = walk_action
+nla_track = ad.nla_tracks.new()
+nla_track.strips.new(jump_action.name, int(jump_action.frame_range[0]), jump_action)
+nla_track.mute = True
+st.anim_motion = "WALK"
+scene.frame_start, scene.frame_end = 1, n
 path = OUT / "walk_unity.fbx"
 check(bpy.ops.airig.export_fbx(filepath=str(path), naming="UNITY", bake_anim=True) == {"FINISHED"}, "걷기 FBX 내보내기")
 check(scene.frame_start == 1 and scene.frame_end == n, "내보낸 뒤 씬 프레임 범위 복원")
+check(ad.action == walk_action and len(ad.nla_tracks) == 1 and nla_track.mute, "내보낸 뒤 리그 액션·NLA 복원")
+check(not [a for a in bpy.data.actions if a.get("airig_game")], "임시 구운 액션 정리")
 check(len([a for a in bpy.data.actions if a.name.startswith(f"{rig.name}_walk_normal")]) == 1, "다시 만들어도 액션이 하나로 유지")
+ad.nla_tracks.remove(nla_track)
+take_names = (walk_action.name, jump_action.name)
 
 # AI Motion 은 현재 씬을 다시 쓰므로 내보낸 FBX 검사는 별도 파일에서 한다
 saved = OUT / "motion_scene.blend"
@@ -270,7 +286,11 @@ bpy.ops.wm.save_as_mainfile(filepath=str(saved), copy=True)
 bpy.ops.wm.read_homefile(use_empty=True)
 bpy.ops.import_scene.fbx(filepath=str(path))
 arm = next(o for o in bpy.data.objects if o.type == "ARMATURE")
-fbx_action = arm.animation_data.action
+names = [a.name for a in bpy.data.actions]
+check(all(any(t in a for a in names) for t in take_names) and not any("Scene" in a for a in names),
+      f"FBX 테이크가 액션 이름별로 나감 {names}")
+fbx_action = next(a for a in bpy.data.actions if take_names[0] in a.name)
+arm.animation_data.action = fbx_action
 lo, hi = fbx_action.frame_range
 check(abs((hi - lo) - n) <= 1, f"FBX 애니메이션 길이 {hi - lo:.0f}프레임 (주기 {n})")
 bpy.context.scene.frame_set(int(lo))

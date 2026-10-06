@@ -21,7 +21,11 @@ class AIRIG_OT_export_fbx(bpy.types.Operator, ExportHelper):
         ),
         default="UNITY",
     )
-    bake_anim: bpy.props.BoolProperty(name="Bake Animation", default=True)
+    bake_anim: bpy.props.BoolProperty(
+        name="Bake Animation",
+        description="리그의 NLA 액션과 활성 액션을 액션 이름의 테이크로 모두 굽는다",
+        default=True,
+    )
     simplify: bpy.props.BoolProperty(
         name="Simplify Bones",
         description="트위스트·손바닥·골반 본을 부모에 합쳐 본 수를 줄인다 (모바일·군중용). 팔뚝 비틀림 표현은 줄어든다",
