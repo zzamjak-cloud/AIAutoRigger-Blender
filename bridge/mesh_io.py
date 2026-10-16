@@ -1,3 +1,5 @@
+from contextlib import contextmanager
+
 import bmesh
 import bpy
 from mathutils import Vector
@@ -7,18 +9,36 @@ from ..core.sampling import sample_surface
 SAMPLE_COUNT = 30000
 
 
-def world_geometry(context, obj):
-    """모디파이어 적용 후 월드 좌표 정점·삼각형."""
-    depsgraph = context.evaluated_depsgraph_get()
-    eval_obj = obj.evaluated_get(depsgraph)
-    mesh = eval_obj.to_mesh()
+@contextmanager
+def rest_shape(obj):
+    """아마추어 모디파이어를 잠시 꺼 레스트 형상으로 평가하게 한다 (그 밖의 모디파이어는 그대로 적용).
+
+    이미 다른 아마추어에 바인딩된 메시를 다시 리깅할 때, 그 아마추어의 현재 포즈(누운 자세 등)로 변형된 형상을
+    분석하면 Y-up 오판이나 관절 오추정이 생긴다.
+    """
+    mods = [m for m in obj.modifiers if m.type == "ARMATURE" and m.show_viewport]
+    for m in mods:
+        m.show_viewport = False
     try:
-        mesh.calc_loop_triangles()
-        mw = obj.matrix_world
-        verts = [tuple(mw @ v.co) for v in mesh.vertices]
-        tris = [tuple(t.vertices) for t in mesh.loop_triangles]
+        yield
     finally:
-        eval_obj.to_mesh_clear()
+        for m in mods:
+            m.show_viewport = True
+
+
+def world_geometry(context, obj):
+    """모디파이어(아마추어 제외) 적용 후 월드 좌표 정점·삼각형."""
+    with rest_shape(obj):
+        depsgraph = context.evaluated_depsgraph_get()
+        eval_obj = obj.evaluated_get(depsgraph)
+        mesh = eval_obj.to_mesh()
+        try:
+            mesh.calc_loop_triangles()
+            mw = obj.matrix_world
+            verts = [tuple(mw @ v.co) for v in mesh.vertices]
+            tris = [tuple(t.vertices) for t in mesh.loop_triangles]
+        finally:
+            eval_obj.to_mesh_clear()
     return verts, tris
 
 
@@ -33,10 +53,10 @@ def hand_graph(context, obj, wrist, hand_tip, radius_ratio=2.4, edge_ratio=0.03)
     """손목 주변 메시를 잘라 촘촘히 나눈 (정점, 간선). 로우폴리 손가락도 측지 거리 단면이 생기도록 세분한다."""
     wrist = Vector(wrist)
     hand_len = (Vector(hand_tip) - wrist).length
-    depsgraph = context.evaluated_depsgraph_get()
     bm = bmesh.new()
     try:
-        bm.from_object(obj, depsgraph)
+        with rest_shape(obj):
+            bm.from_object(obj, context.evaluated_depsgraph_get())
         bm.transform(obj.matrix_world)
         far = [v for v in bm.verts if (v.co - wrist).length > radius_ratio * hand_len]
         bmesh.ops.delete(bm, geom=far, context="VERTS")

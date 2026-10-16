@@ -6,6 +6,13 @@ from .agents import backends
 from .agents.claude_client import DEFAULT_MODEL
 
 
+def _ensure_trailing_sep(prefs, prop):
+    """폴더 경로 끝에 구분자를 붙인다. 없으면 Blender 폴더 선택 창이 마지막 이름을 파일로 보고 상위 폴더를 연다."""
+    value = getattr(prefs, prop).strip()
+    if value and not value.endswith(("/", "\\")):
+        setattr(prefs, prop, value + os.sep)  # 다시 불려도 이번에는 조건에 걸리지 않아 멈춘다
+
+
 class AIRIG_AP_preferences(bpy.types.AddonPreferences):
     bl_idname = __package__
 
@@ -44,6 +51,7 @@ class AIRIG_AP_preferences(bpy.types.AddonPreferences):
         name="모션 템플릿 폴더",
         description="모션 템플릿을 등록·읽는 폴더 (팀 공유 폴더 등). 비우면 Blender 사용자 설정 폴더의 ai_auto_rigger/templates",
         subtype="DIR_PATH",
+        update=lambda self, _context: _ensure_trailing_sep(self, "template_dir"),
     )
 
     def draw(self, context):

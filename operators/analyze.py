@@ -1,5 +1,6 @@
 import bpy
 
+from ..bridge import mesh_io
 from ..core.mesh_analysis import analyze_points
 
 
@@ -17,15 +18,8 @@ class AIRIG_OT_analyze_mesh(bpy.types.Operator):
 
     def execute(self, context):
         obj = context.active_object
-        # 모디파이어 적용 결과 기준으로 분석해야 실제 리깅 대상 형상과 일치한다
-        depsgraph = context.evaluated_depsgraph_get()
-        eval_obj = obj.evaluated_get(depsgraph)
-        mesh = eval_obj.to_mesh()
-        try:
-            mw = obj.matrix_world
-            points = [tuple(mw @ v.co) for v in mesh.vertices]
-        finally:
-            eval_obj.to_mesh_clear()
+        # 모디파이어 적용 결과 기준으로 분석해야 실제 리깅 대상 형상과 일치한다 (아마추어 포즈는 빼고 레스트 형상)
+        points, _tris = mesh_io.world_geometry(context, obj)
 
         try:
             result = analyze_points(points)

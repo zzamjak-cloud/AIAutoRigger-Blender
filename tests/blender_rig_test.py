@@ -237,9 +237,45 @@ def run_rotated():
     check(dy > 0.02 * H, f"+Y 정면: 무릎이 정면(+Y)으로 굽음 Δy={dy:.3f}")
 
 
+def run_prebound():
+    """다른 아마추어에 바인딩돼 포즈가 걸린(누운) 메시도 레스트 형상으로 분석해 리깅한다."""
+    bpy.ops.wm.read_homefile(use_empty=True)
+    obj, gt = make_mesh("realistic_a")
+    H = obj.dimensions.z
+    arm_data = bpy.data.armatures.new("old_rig")
+    arm = bpy.data.objects.new("old_rig", arm_data)
+    bpy.context.scene.collection.objects.link(arm)
+    bpy.context.view_layer.objects.active = arm
+    bpy.ops.object.mode_set(mode="EDIT")
+    b = arm_data.edit_bones.new("root_bone")
+    b.head, b.tail = (0.0, 0.0, 0.0), (0.0, 0.0, 0.3)
+    bpy.ops.object.mode_set(mode="OBJECT")
+    vg = obj.vertex_groups.new(name="root_bone")
+    vg.add(list(range(len(obj.data.vertices))), 1.0, "REPLACE")
+    mod = obj.modifiers.new("old_armature", "ARMATURE")
+    mod.object = arm
+    obj.parent = arm
+    # 예전 리그의 현재 포즈: 앞으로 90° 넘어져 누운 자세 (이대로 분석하면 Y-up 으로 오판한다)
+    arm.pose.bones["root_bone"].rotation_mode = "XYZ"
+    arm.pose.bones["root_bone"].rotation_euler = (1.5708, 0.0, 0.0)
+    bpy.context.view_layer.update()
+    for o in bpy.context.selected_objects:
+        o.select_set(False)
+    obj.select_set(True)
+    bpy.context.view_layer.objects.active = obj
+    check(bpy.ops.airig.auto_rig() == {"FINISHED"}, "포즈가 걸린 기존 아마추어에 바인딩된 메시: auto_rig")
+    state = bpy.context.scene.airig
+    metarig = bpy.data.objects[state.metarig_name]
+    err = dist(metarig.matrix_world @ metarig.data.bones["upper_arm.L"].head_local, gt["shoulder_L"]) / H
+    check(err < JOINT_TOL, f"기존 바인딩 메시: 레스트 형상 기준 관절 (upper_arm.L 오차 {err:.3f})")
+    check(all(m.type != "ARMATURE" or m.object.name == state.rig_name for m in obj.modifiers),
+          "기존 아마추어 모디파이어는 새 리그로 교체")
+
+
 for v in humanoid.VARIANTS:
     run_variant(v)
 run_rotated()
+run_prebound()
 for v in quadruped.VARIANTS:
     run_quadruped(v)
 print("[rig] ALL PASSED")

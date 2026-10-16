@@ -101,6 +101,22 @@ def _lerp(a: Point, b: Point, t: float) -> Point:
     return (a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t)
 
 
+def bend_off_line(a: Point, m: Point, b: Point, sign: float, gap: float) -> Point:
+    """가운데 관절 m 을 a→b 선에서 앞뒤(Y)로 sign 쪽에 최소 gap 만큼 떨어지게 한다 (이미 떨어져 있으면 그대로).
+
+    sign=-1 은 앞(-Y, 무릎), +1 은 뒤(+Y, 팔꿈치). 선 위 기준점은 m 을 a→b 에 정사영한 점이다.
+    """
+    ab = [b[i] - a[i] for i in range(3)]
+    ll = sum(x * x for x in ab)
+    u = 0.0 if ll <= 0.0 else min(1.0, max(0.0, sum((m[i] - a[i]) * ab[i] for i in range(3)) / ll))
+    line_y = a[1] + ab[1] * u
+    if sign < 0:
+        y = min(m[1], line_y - gap)
+    else:
+        y = max(m[1], line_y + gap)
+    return (m[0], y, m[2])
+
+
 def _arm_component(points: list[Point], cx: float, sign: float, threshold: float, voxel: float, zmin_allowed: float):
     """손끝(가장 바깥 점)에서 시작해 몸통 바깥 반공간 안에서 복셀 연결 성분을 확장한다."""
     cand = [p for p in points if sign * (p[0] - cx) > threshold and p[2] > zmin_allowed]
@@ -275,6 +291,9 @@ def estimate_biped(points: Sequence[Sequence[float]], symmetric: bool = True) ->
         knee_z = 0.5 * (hip_z + ankle_z)
         knee = leg_at(knee_z)
         knee = (knee[0], knee[1] - BEND_RATIO * leg_len, knee[2])
+        # 굵은 다리처럼 발목 단면 중심이 앞쪽에 잡히면 엉덩이→발목 선이 앞으로 기울어, 단면 중심 기준으로 앞에 둔
+        # 무릎도 그 선보다 뒤에 놓일 수 있다. Rigify IK 는 레스트에서 굽은 쪽으로 굽으므로 선 기준으로 앞에 둔다
+        knee = bend_off_line(hip, knee, ankle, -1.0, BEND_RATIO * leg_len)
 
         foot = [p for k, iv in leg_slices if z_of(k) < ankle_z for p in iv.points] or leg_slices[0][1].points
         toe_y = min(p[1] for p in foot)
@@ -335,6 +354,7 @@ def estimate_biped(points: Sequence[Sequence[float]], symmetric: bool = True) ->
         elbow = _band_centroid(arm, shoulder, u, length, 0.37, 0.43) or _lerp(shoulder, tip_c, 0.4)
         wrist = _band_centroid(arm, shoulder, u, length, 0.72, 0.78) or _lerp(shoulder, tip_c, 0.75)
         elbow = (elbow[0], elbow[1] + BEND_RATIO * length, elbow[2])
+        elbow = bend_off_line(shoulder, elbow, wrist, 1.0, BEND_RATIO * length)  # 팔꿈치는 어깨→손목 선보다 뒤
         joints[f"shoulder_{name}"] = shoulder
         joints[f"elbow_{name}"] = elbow
         joints[f"wrist_{name}"] = wrist

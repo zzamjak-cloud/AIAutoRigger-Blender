@@ -6,7 +6,7 @@ import bpy
 
 from .. import preferences
 from ..agents import backends, landmark_agent, landmark_schema
-from ..bridge import views
+from ..bridge import mesh_io, views
 from . import rig
 
 POLL_INTERVAL = 0.25
@@ -34,7 +34,11 @@ class AIRIG_OT_ai_auto_rig(bpy.types.Operator):
         self.mesh_name = context.active_object.name
         try:
             self.est = rig.estimate(context, context.active_object)
-            images, self.views, _size = views.render_views(context, context.active_object, self.est.facing)
+            # 관절 추정과 같은 레스트 형상을 렌더한다 (기존 아마추어 포즈로 변형된 메시를 AI 에게 보내지 않게)
+            with mesh_io.rest_shape(context.active_object):
+                context.view_layer.update()
+                images, self.views, _size = views.render_views(context, context.active_object, self.est.facing)
+            context.view_layer.update()
             backend = self.backend = backends.create(preferences.backend_settings(context))
         except (ValueError, RuntimeError) as exc:
             self.report({"ERROR"}, str(exc))

@@ -71,6 +71,33 @@ class BipedLandmarkTest(unittest.TestCase):
         self.assertLess(j["knee_L"][1], 0.5 * (j["hip_L"][1] + j["ankle_L"][1]))
         self.assertGreater(j["elbow_L"][1], 0.5 * (j["shoulder_L"][1] + j["wrist_L"][1]))
 
+    def test_bend_measured_from_limb_line(self):
+        # 모든 체형에서 무릎은 엉덩이→발목 선보다 앞, 팔꿈치는 어깨→손목 선보다 뒤 (선 기준, 단면 중심 기준이 아님)
+        def offset(a, m, b):
+            ab = [b[i] - a[i] for i in range(3)]
+            u = sum((m[i] - a[i]) * ab[i] for i in range(3)) / sum(x * x for x in ab)
+            return m[1] - (a[1] + ab[1] * u)
+        for variant in humanoid.VARIANTS:
+            verts, tris, _ = humanoid.build(variant)
+            j = biped.estimate_biped(sampling.sample_surface(verts, tris, 30000, seed=3)).joints
+            for s in ("L", "R"):
+                self.assertLess(offset(j[f"hip_{s}"], j[f"knee_{s}"], j[f"ankle_{s}"]), -0.01, f"{variant} 무릎 {s}")
+                self.assertGreater(offset(j[f"shoulder_{s}"], j[f"elbow_{s}"], j[f"wrist_{s}"]), 0.01, f"{variant} 팔꿈치 {s}")
+
+    def test_bend_off_line_fixes_forward_ankle(self):
+        # Zombie_Big 실측: 발목이 엉덩이보다 앞(-Y)이라 단면 중심 무릎이 선보다 4.6cm 뒤에 있던 경우
+        hip, knee, ankle = (0.19, -0.004, 0.639), (0.218, 0.001, 0.392), (0.202, -0.087, 0.146)
+        fixed = biped.bend_off_line(hip, knee, ankle, -1.0, 0.015)
+        ab = [ankle[i] - hip[i] for i in range(3)]
+        u = sum((knee[i] - hip[i]) * ab[i] for i in range(3)) / sum(x * x for x in ab)
+        line_y = hip[1] + ab[1] * u
+        self.assertLess(fixed[1], line_y - 0.014)
+        self.assertEqual((fixed[0], fixed[2]), (knee[0], knee[2]), "앞뒤(Y)만 바꾼다")
+        already = (0.2, -0.2, 0.39)
+        self.assertEqual(biped.bend_off_line(hip, already, ankle, -1.0, 0.015), already, "이미 앞이면 그대로")
+        elbow = biped.bend_off_line((0.5, 0.0, 1.6), (0.9, -0.05, 1.3), (1.2, 0.0, 1.0), 1.0, 0.02)
+        self.assertGreaterEqual(elbow[1], 0.02 - 1e-9)
+
     def test_sampling_deterministic(self):
         verts, tris, _ = humanoid.build("realistic_t")
         self.assertEqual(sampling.sample_surface(verts, tris, 100, seed=5), sampling.sample_surface(verts, tris, 100, seed=5))
