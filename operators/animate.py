@@ -39,7 +39,7 @@ def build(params, body):
     """GaitParams 또는 ClipParams → Motion."""
     if isinstance(params, poseclip.ClipParams):
         return poseclip.to_motion(params, body)
-    return locomotion.generate(params, body.leg, body.arm)
+    return locomotion.generate(params, body.leg, body.arm, body.heights())
 
 
 def _apply(context, rig, facing, params, label, name=None):

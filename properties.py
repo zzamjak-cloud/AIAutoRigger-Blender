@@ -16,6 +16,48 @@ def library_items(self, context):
     return _library_items
 
 
+_template_types = [("AUTO", "Auto (체형)", "", "", 0)]
+_template_motions = [("", "(없음)", "", "", 0)]
+
+
+def _stable_id(name):
+    """EnumProperty 항목 번호 (이름 해시, 0 은 Auto·없음 전용)."""
+    import zlib
+    return (zlib.crc32(name.encode("utf-8")) & 0x3FFFFFFF) or 1
+
+
+def template_type_items(self, context):
+    global _template_types
+    try:
+        from .core import motion_template
+        from .operators.template import templates
+        found = motion_template.types(templates(context))
+    except Exception:  # 애드온 로드 전·템플릿 폴더 손상
+        found = []
+    # 번호를 이름에서 정해 둔다. 위치 번호면 목록이 바뀔 때(새 타입 등록) 선택이 다른 항목으로 옮겨 간다
+    _template_types = [("AUTO", "Auto (체형)", "체형(다리·팔·폭 비율)이 가장 비슷한 타입의 템플릿을 쓴다", "", 0)]
+    _template_types += [(t, t, f"{t} 타입 템플릿", "", _stable_id(t)) for t in found]
+    return _template_types
+
+
+def template_motion_items(self, context):
+    global _template_motions
+    try:
+        from .core import motion_template
+        from .operators.template import templates
+        data = templates(context)
+        names = motion_template.motions(data, self.anim_template_type)
+    except Exception:
+        data, names = {}, []
+    items = []
+    for n in names:
+        entry = data.get((self.anim_template_type, n))
+        desc = f"v{entry.get('version', 1)} · {entry['frames']}프레임 · {'루프' if entry['loop'] else '단발'}" if entry else n
+        items.append((n, n, desc, "", _stable_id(n)))
+    _template_motions = items or [("", "(없음)", "", "", 0)]
+    return _template_motions
+
+
 
 class AIRIG_PG_proposal(bpy.types.PropertyGroup):
     """Rig Review Agent 보정안 (사용자 승인 대기)"""
@@ -64,7 +106,8 @@ class AIRIG_PG_state(bpy.types.PropertyGroup):
         items=(("WALK", "Walk", "걷기 루프"), ("RUN", "Run", "달리기 루프"), ("IDLE", "Idle", "대기 루프"),
                ("HAPPY", "Happy", "기쁨 루프 (팔을 들고 깡충 뛰기)"), ("JUMP", "Jump", "점프 (단발)"),
                ("ATTACK", "Attack", "한 손 휘두르기 공격 (단발)"), ("HIT", "Hit", "피격 반응 (단발)"),
-               ("DEATH", "Death", "쓰러져 눕는 사망 (단발, 끝 자세 유지)")),
+               ("DEATH", "Death", "쓰러져 눕는 사망 (단발, 끝 자세 유지)"),
+               ("EMERGE", "Emerge", "땅속에서 손으로 땅을 짚고 기어 올라와 일어서기 (단발, 땅속에서 시작)")),
         default="WALK",
     )
     anim_style: bpy.props.EnumProperty(
@@ -85,6 +128,14 @@ class AIRIG_PG_state(bpy.types.PropertyGroup):
     anim_library: bpy.props.EnumProperty(name="Library", description="동작 사전의 포즈 클립 (내장 + 사용자 저장)", items=library_items)
     anim_library_name: bpy.props.StringProperty(name="Name", description="사전에 저장할 이름 (영문·숫자·_)")
     anim_library_desc: bpy.props.StringProperty(name="Description", description="사전 설명 (비우면 프롬프트를 쓴다)")
+    anim_template_type: bpy.props.EnumProperty(name="Template Type", description="모션 템플릿 타입 (체형)", items=template_type_items)
+    anim_template_motion: bpy.props.EnumProperty(name="Template", description="타입의 모션 템플릿", items=template_motion_items)
+    anim_template_new_type: bpy.props.StringProperty(
+        name="Register Type", description="등록할 타입 이름 (예: Zombie_Thin, Zombie_Fat). 비우면 메시 이름",
+    )
+    anim_template_name: bpy.props.StringProperty(
+        name="Template Name", description="활성 액션을 등록할 이름. 비우면 액션 이름에서 메시 이름을 뺀 이름 (Zombie_Thin_walk → walk)",
+    )
     anim_review_rounds: bpy.props.IntProperty(
         name="Review Rounds", description="렌더한 프레임을 AI 가 보고 보정하는 횟수", default=1, min=0, max=3,
     )

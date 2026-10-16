@@ -1,9 +1,10 @@
-"""2족 애니메이션 키 포즈 생성 (bpy 비의존): 루프(걷기·달리기·대기·기쁨)와 단발 동작(점프·공격·피격·사망).
+"""2족 애니메이션 키 포즈 생성 (bpy 비의존): 루프(걷기·달리기·대기·기쁨)와 단발 동작(점프·공격·피격·사망·땅에서 기어오르기).
 
 매 프레임 키를 찍지 않고 동작의 극점 포즈(접지·낮은 자세·교차·높은 자세 등)에만 키를 둔다.
 사이는 베지어(Auto-Clamped)로 보간하고, 발이 땅을 딛는 구간만 선형으로 두어 미끄러짐을 막는다.
 루프 동작은 각 채널의 마지막 키를 첫 키의 한 주기 뒤 복제로 닫아 Cycles 모디파이어가 끊김 없이 반복하게 한다.
-단발 동작은 t=0 에서 시작해 t=1 에서 끝나며(점프·공격·피격은 레스트로 복귀, 사망은 쓰러진 자세 유지) 반복하지 않는다.
+단발 동작은 t=0 에서 시작해 t=1 에서 끝나며(점프·공격·피격·기어오르기는 레스트로 복귀, 사망은 쓰러진 자세 유지) 반복하지 않는다.
+기어오르기(EMERGE)는 땅속(바닥 아래)에서 시작한다. 루트는 움직이지 않으므로 게임에서는 지면이 몸을 가린다.
 
 좌표는 캐릭터 기준: 오프셋 (side, forward, up) — side 는 캐릭터 왼쪽, forward 는 정면, up 은 위.
 회전 (pitch, roll, yaw) 도(degree): pitch>0 앞으로 숙임(발은 발끝 내림), roll>0 오른쪽으로 기울임, yaw>0 왼쪽으로 돎.
@@ -13,11 +14,11 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field, fields
-from math import cos, pi
+from math import cos, pi, sin
 
 from . import handshape
 
-MOTIONS = ("WALK", "RUN", "IDLE", "HAPPY", "JUMP", "ATTACK", "HIT", "DEATH")
+MOTIONS = ("WALK", "RUN", "IDLE", "HAPPY", "JUMP", "ATTACK", "HIT", "DEATH", "EMERGE")
 LOOPING = frozenset({"WALK", "RUN", "IDLE", "HAPPY"})  # 나머지는 단발 동작
 ROOT_MOTION_OK = frozenset({"WALK", "RUN", "JUMP"})  # 전진이 의미 있는 동작
 STYLES = ("NORMAL", "ZOMBIE")
@@ -59,6 +60,7 @@ class GaitParams:
     attack_kind: str = "SWING"  # 공격 궤적: SWING 가로 휘두르기 | THRUST 찌르기 | SLASH_H 가로 베기 | SLASH_V 세로 베기 | OVERHEAD 내려찍기
     two_handed: bool = False  # 양손으로 쥐고 공격 (반대 손이 방어 대신 함께 움직임)
     fall_dir: str = "BACK"  # 사망 시 쓰러지는 방향 "BACK" | "FRONT"
+    bury_depth: float = 1.05  # 기어오르기: 시작할 때 몸이 땅속에 묻힌 깊이 / 키 (1 이상이면 머리끝까지 묻힘)
     hand_shape: str = "AUTO"  # 손 모양: AUTO(동작에 맞춰 고름) 또는 handshape.SHAPES 이름 하나로 고정 (좀비는 CLAW)
     root_motion: bool = False
 
@@ -82,7 +84,7 @@ RANGES = {
     "hip_yaw_deg": (0.0, 40.0), "chest_counter_deg": (0.0, 40.0), "toe_roll_deg": (0.0, 45.0),
     "arm_swing": (0.0, 0.6), "arm_forward": (0.0, 0.9), "arm_raise": (-0.3, 0.9), "arm_inward": (0.0, 0.6),
     "head_pitch_deg": (-30.0, 45.0), "head_roll_deg": (-30.0, 30.0), "head_bob_deg": (0.0, 15.0),
-    "limp": (0.0, 1.0), "jump_height": (0.05, 1.0), "anticipation": (0.05, 0.5),
+    "limp": (0.0, 1.0), "jump_height": (0.05, 1.0), "anticipation": (0.05, 0.5), "bury_depth": (0.85, 1.5),
 }
 
 PRESETS = {
@@ -132,6 +134,11 @@ PRESETS = {
                               head_pitch_deg=-15.0, head_roll_deg=10.0, head_bob_deg=0.0),
     ("DEATH", "ZOMBIE"): dict(cycle_frames=60, crouch=0.15, anticipation=0.3, fall_dir="FRONT", arm_raise=0.2, arm_swing=0.1,
                               arm_forward=0.4, head_pitch_deg=10.0, head_roll_deg=15.0, head_bob_deg=0.0),
+    # 땅에서 기어오르기: 땅속에서 손이 뚫고 나와 땅을 짚고, 상체 → 한쪽 무릎 → 반대 발 순서로 빠져나와 일어선다
+    ("EMERGE", "NORMAL"): dict(cycle_frames=96, crouch=0.06, anticipation=0.12, lean_deg=8.0, arm_forward=0.55,
+                               arm_raise=0.1, arm_inward=0.15, head_pitch_deg=0.0, head_roll_deg=0.0, head_bob_deg=0.0),
+    ("EMERGE", "ZOMBIE"): dict(cycle_frames=120, crouch=0.08, anticipation=0.15, lean_deg=14.0, arm_forward=0.6,
+                               arm_raise=0.2, arm_inward=0.2, head_pitch_deg=12.0, head_roll_deg=14.0, head_bob_deg=6.0),
 }
 
 
@@ -265,10 +272,18 @@ def _foot_keys(p: GaitParams, leg: float, phase: float, limp: float) -> tuple[li
     return _close(loc), _close(rot)
 
 
-def generate(p: GaitParams, leg: float, arm: float) -> Motion:
-    """키 포즈 채널. 반환 위치 오프셋은 m, 회전은 도. 손가락은 fingers.L/R 채널(손가락별 굽힘 0~1)."""
+def generate(p: GaitParams, leg: float, arm: float, heights: dict | None = None) -> Motion:
+    """키 포즈 채널. 반환 위치 오프셋은 m, 회전은 도. 손가락은 fingers.L/R 채널(손가락별 굽힘 0~1).
+
+    heights 는 바닥 기준 레스트 높이 실측(m) {"head": 머리끝, "shoulder": 어깨, "hand": 손 IK}. 기어오르기처럼
+    땅 높이가 중요한 동작만 쓰고, 없으면 다리 길이로 어림한다.
+    """
     builder = _BUILDERS.get(p.motion, _gait)
-    m = builder(p, leg, arm)
+    if builder is _emerge:
+        m = _emerge(p, leg, arm, {"head": 2.3 * leg, "shoulder": 1.9 * leg, "hand": 0.94 * leg, "torso": 1.07 * leg,
+                                  "shoulder_side": 0.5 * arm, "shoulder_fwd": 0.0, "torso_fwd": 0.0, **(heights or {})})
+    else:
+        m = builder(p, leg, arm)
     m.channels += finger_channels(_finger_plan(p), p.loop)
     return m
 
@@ -319,6 +334,10 @@ def _finger_plan(p: GaitParams) -> dict:
         tip = min(0.6, a + 0.25)
         settle = min(0.95, min(0.85, min(0.75, tip + 0.17) + 0.08) + 0.12)
         return both([(0.0, "RELAXED"), (tip, "OPEN"), (settle, "RELAXED")])
+    if p.motion == "EMERGE":
+        # _emerge 와 같은 시점: 땅을 헤치고 짚는 동안 손을 펴고, 일어서며 힘을 뺀다
+        at = _emerge_time(p)
+        return both([(0.0, "LOOSE_FIST"), (at(0.1), "OPEN"), (at(0.82), "RELAXED")])
     return both([(0.0, "RELAXED")])  # 걷기·대기
 
 
@@ -658,8 +677,177 @@ def _death(p: GaitParams, leg: float, arm: float) -> Motion:
     return Motion(p, ch, 0.0)
 
 
+def _emerge_time(p: GaitParams):
+    """기어오르기 시점표. 기준 시점(첫 손이 나오는 0.15 기준)을 anticipation 에 맞춰 늘이거나 줄인다."""
+    a = p.anticipation
+
+    def at(b):
+        return a * b / 0.15 if b <= 0.15 else a + (b - 0.15) * (1.0 - a) / 0.85
+    return at
+
+
+def _emerge(p: GaitParams, leg: float, arm: float, heights: dict) -> Motion:
+    """땅에서 기어오르기 단발 동작: 땅속 → 오른손·왼손이 뚫고 나와 땅을 짚음 → 머리·상체가 나옴 → 오른 무릎을 땅 위로
+    올려 딛음 → 손으로 밀며 왼발을 빼냄 → 구부정하게 선 뒤 레스트로 복귀.
+
+    루트는 움직이지 않는다 (게임에서는 지면이 몸을 가린다). 땅을 짚은 손은 Root 기준 절대 위치라 몸이 올라와도
+    미끄러지지 않고, 땅속의 발은 몸통과 같이 움직여 다리가 늘어나지 않는다. 손이 뚫고 나오는 높이는 그때의 어깨
+    높이에서 팔이 닿는 만큼이라 팔이 늘어나지 않는다.
+    """
+    at = _emerge_time(p)
+    hip = heights["torso"]  # 몸통(골반) 레스트 높이 = 몸통 회전 중심
+    # 땅속에서는 상체를 앞으로 숙이고(UNDER 도) 고개를 숙여, 머리가 큰 체형도 손이 머리보다 먼저 땅을 뚫게 한다
+    under = 60.0
+    cp, sp = cos(under * pi / 180.0), sin(under * pi / 180.0)
+    sh_fwd = (heights["shoulder"] - hip) * sp  # 숙인 어깨가 앞으로 나온 거리
+    shoulder = hip + (heights["shoulder"] - hip) * cp  # 숙인 자세의 어깨·머리끝 높이 (몸통 레스트 기준)
+    top = hip + (heights["head"] - hip) * cp
+    D = max(p.bury_depth * heights["head"], heights["shoulder"] + 0.5 * arm)
+    # 첫 손이 나올 때 몸통 높이: 어깨가 땅 밑 0.3 팔 길이, 단 머리끝은 아직 땅속
+    sb = min(-0.3 * arm - shoulder, -top - 0.02 * heights["head"])
+    c = p.crouch * leg
+    lean = p.lean_deg
+    hp, hr, hb = p.head_pitch_deg, p.head_roll_deg, p.head_bob_deg
+    # 몸통 (t, (side, fwd, up), (pitch, roll, yaw)). 몸을 앞으로 숙여 땅을 짚은 손 쪽으로 끌어올린다
+    body = [
+        (0.0, (0.0, 0.0, -D), (under, 0.0, 0.0)),
+        (at(0.1), (0.0, 0.0, sb - 0.15 * arm), (under, -4.0, -3.0)),  # 땅속에서 올라옴
+        (at(0.15), (0.0, 0.0, sb), (under - 2.0, -8.0, -6.0)),  # 오른손을 뻗으며 오른쪽 어깨가 올라옴
+        (at(0.22), (0.0, 0.02 * leg, sb + 0.3 * arm), (under - 5.0, 8.0, 6.0)),  # 오른손이 땅을 짚고 왼손이 나옴
+        (at(0.32), (0.0, 0.06 * leg, max(sb + 0.4 * arm, min(sb + 0.6 * arm, -1.3 * hip))), (30.0, -4.0, 0.0)),  # 머리가 나옴
+        (at(0.45), (0.0, 0.12 * leg, -1.05 * hip), (45.0, 4.0, 0.0)),  # 상체를 끌어올림 (골반이 지면 높이)
+        (at(0.58), (0.0, 0.16 * leg, -0.55 * hip), (52.0, -3.0, -4.0)),  # 오른 무릎이 땅 위로
+        (at(0.7), (0.0, 0.12 * leg, -0.25 * hip), (36.0, 2.0, 3.0)),  # 손으로 밀며 일어남
+        (at(0.82), (0.0, 0.04 * leg, -c - 0.03 * leg), (lean + 6.0, 0.0, 0.0)),
+        (at(0.92), (0.0, 0.0, -c), (lean, 0.0, 0.0)),
+        (1.0, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
+    ]
+    # 몸통은 계속 올라온다: 체형에 따라 앞 키가 뒤 키보다 높게 계산되면 뒤 키 높이로 낮춘다
+    for i in range(len(body) - 2, -1, -1):
+        t, loc, rot = body[i]
+        if loc[2] > body[i + 1][1][2]:
+            body[i] = (t, (loc[0], loc[1], body[i + 1][1][2]), rot)
+    torso_loc = _hold([Key(t, loc) for t, loc, _ in body])
+    torso_rot = _hold([Key(t, rot) for t, _, rot in body])
+    chest = _hold([Key(0.0, (0.0, 0.0, 0.0)), Key(at(0.15), (0.0, -6.0, -10.0)), Key(at(0.22), (0.0, 6.0, 10.0)),
+                   Key(at(0.45), (-8.0, 0.0, 0.0)), Key(at(0.7), (-4.0, 0.0, 0.0)), Key(1.0, (0.0, 0.0, 0.0))])
+    # 땅속에서는 위를 올려다보고, 나온 뒤에는 앞을 본다 (숙인 몸통을 상쇄)
+    head = _hold([Key(0.0, (30.0, 0.0, 0.0)), Key(at(0.15), (30.0, 0.0, 0.0)), Key(at(0.32), (-30.0, 0.5 * hr, 0.0)),
+                  Key(at(0.45), (-25.0 - hb, -0.5 * hr, 0.0)), Key(at(0.58), (-22.0, hr, 0.0)),
+                  Key(at(0.82), (hp, hr, 0.0)), Key(at(0.92), (hp + hb, hr - hb, 0.0)), Key(1.0, (0.0, 0.0, 0.0))])
+    ch = [Channel("torso", "loc", torso_loc), Channel("torso", "rot", torso_rot), Channel("chest", "rot", chest),
+          Channel("head", "rot", head)]
+
+    # 발: 땅속에서는 몸통과 같이 움직이고(다리 길이 유지), 오른 무릎을 먼저 올려 앞에 딛고 왼발을 뒤에서 빼낸다
+    def buried(i):
+        return (0.0, body[i][1][1], body[i][1][2])
+
+    sunk = [Key(body[i][0], buried(i)) for i in range(5)]  # 땅속: 몸통 키마다 같이 움직인다
+    foot_r = [*sunk, Key(at(0.45), buried(5)),
+              Key(at(0.53), (0.0, 0.22 * leg, 0.14 * leg)), Key(at(0.6), (0.0, 0.28 * leg, 0.0), LINEAR),
+              Key(at(0.76), (0.0, 0.28 * leg, 0.0)), Key(at(0.8), (0.0, 0.14 * leg, 0.07 * leg)),
+              Key(at(0.86), (0.0, 0.0, 0.0), LINEAR), Key(1.0, (0.0, 0.0, 0.0))]
+    foot_l = [*sunk, Key(at(0.45), buried(5)),
+              Key(at(0.58), buried(6)), Key(at(0.66), (0.0, -0.04 * leg, 0.07 * leg)),
+              Key(at(0.72), (0.0, -0.08 * leg, 0.0), LINEAR), Key(at(0.86), (0.0, -0.08 * leg, 0.0)),
+              Key(at(0.9), (0.0, -0.03 * leg, 0.05 * leg)), Key(at(0.95), (0.0, 0.0, 0.0), LINEAR), Key(1.0, (0.0, 0.0, 0.0))]
+    # 땅을 뚫고 올라오는 발은 발끝을 늘어뜨린다 (pitch>0)
+    toe_r = _hold([Key(0.0, (0.0, 0.0, 0.0)), Key(at(0.45), (20.0, 0.0, 0.0)), Key(at(0.53), (30.0, 0.0, 0.0)),
+                   Key(at(0.6), (0.0, 0.0, 0.0)), Key(1.0, (0.0, 0.0, 0.0))])
+    toe_l = _hold([Key(0.0, (0.0, 0.0, 0.0)), Key(at(0.58), (20.0, 0.0, 0.0)), Key(at(0.66), (25.0, 0.0, 0.0)),
+                   Key(at(0.72), (0.0, 0.0, 0.0)), Key(1.0, (0.0, 0.0, 0.0))])
+    ch += [Channel("foot_ik.R", "loc", _hold(foot_r)), Channel("foot_ik.L", "loc", _hold(foot_l)),
+           Channel("foot_ik.R", "rot", toe_r), Channel("foot_ik.L", "rot", toe_l)]
+
+    # 손: Root 기준 절대 높이로 둔다 (rest_h = 손 IK 레스트 높이)
+    rest_h = heights["hand"]
+    ground = 0.15 * arm - rest_h  # 땅을 짚은 손목 높이 (손가락이 흙을 움켜쥔다)
+    reach = p.arm_forward * arm
+    stand_fwd, stand_up = 0.75 * reach, p.arm_raise * arm
+
+    def above(h):  # 바닥에서 h(m) 높이
+        return h - rest_h
+
+    def follow(i, off):  # 몸통 키 i 를 따르는 손 위치 (땅속)
+        t_loc = body[i][1]
+        return tuple(a + b for a, b in zip(off, t_loc))
+
+    def standing(i, side):
+        return follow(i, (_inward(p, arm, side), stand_fwd, stand_up))
+
+    def shoulder_at(t, side):
+        """시점 t 의 어깨 위치 (손 레스트 기준 캐릭터 축 오프셋, m): 몸통 이동 + 몸통 숙임(피벗 기준 회전).
+        몸통 키 사이는 선형. 옆으로 기울임·비틀기는 무시한다."""
+        o = 1.0 if side == "L" else -1.0
+        sh0 = (-o * heights["shoulder_side"], heights["shoulder_fwd"], heights["shoulder"] - rest_h)
+        pv = (sh0[0], heights["torso_fwd"], heights["torso"] - rest_h)
+        vf, vu = sh0[1] - pv[1], sh0[2] - pv[2]
+
+        def at_key(i):
+            (_t, loc, rot) = body[i]
+            c, s_ = cos(rot[0] * pi / 180.0), sin(rot[0] * pi / 180.0)
+            return (sh0[0] + loc[0], pv[1] + vf * c + vu * s_ + loc[1], pv[2] + vu * c - vf * s_ + loc[2])
+        for i in range(len(body) - 1):
+            t0, t1 = body[i][0], body[i + 1][0]
+            if t0 <= t <= t1:
+                u = 0.0 if t1 == t0 else (t - t0) / (t1 - t0)
+                a, b = at_key(i), at_key(i + 1)
+                return tuple(x + (y - x) * u for x, y in zip(a, b))
+        return at_key(len(body) - 1)
+
+    def within_reach(t, side, v, limit=0.92 * arm):
+        """손 위치 v 가 그때 어깨에서 팔이 닿는 거리 안에 있게 한다: 수평 위치는 두고 높이를 어깨 쪽으로 옮긴다."""
+        sh = shoulder_at(t, side)
+        d = [a - b for a, b in zip(v, sh)]
+        if sum(x * x for x in d) <= limit * limit:
+            return v
+        h = (d[0] * d[0] + d[1] * d[1]) ** 0.5
+        if h > 0.95 * limit:  # 수평으로도 멀면 어깨 쪽으로 당긴다
+            d[0], d[1] = d[0] * 0.95 * limit / h, d[1] * 0.95 * limit / h
+            h = 0.95 * limit
+        dz = (limit * limit - h * h) ** 0.5
+        d[2] = dz if d[2] > 0.0 else -dz
+        return tuple(a + b for a, b in zip(sh, d))
+
+    hands = {}
+    for side, burst, plant, i in (("R", 0.15, 0.22, 2), ("L", 0.22, 0.3, 3)):
+        inw = _inward(p, arm, side)
+        o = 1.0 if side == "L" else -1.0
+        planted = (inw, reach, ground)
+        # 그때 어깨에서 팔이 닿는 높이 (머리가 큰 체형은 손끝만 땅 위로 나온다)
+        top = shoulder + body[i][1][2] + 0.75 * arm
+        keys = [Key(0.0, follow(0, (0.0, sh_fwd, 0.3 * arm))),  # 땅속에서는 몸을 따라 팔을 조금 든다
+                Key(at(0.1), follow(1, (0.3 * inw, sh_fwd + 0.05 * arm, 0.5 * arm))),
+                # 땅을 뚫고 위로 뻗음: 어깨 바로 위 (레스트 손은 어깨보다 바깥·앞에 있다)
+                Key(at(burst), (-o * 0.9 * heights["shoulder_side"], sh_fwd + heights["shoulder_fwd"] + 0.1 * arm, above(top))),
+                Key(at(plant), planted, LINEAR)]
+        if side == "R":
+            # 오른손은 무릎이 올라오면 그 무릎을 짚는다
+            knee = above(0.55 * leg)
+            keys += [Key(at(0.5), planted), Key(at(0.62), (inw, 0.3 * leg, knee)),
+                     Key(at(0.72), (inw, 0.3 * leg, knee + 0.15 * leg))]
+        else:
+            keys += [Key(at(0.52), planted), Key(at(0.64), (inw, 0.7 * reach, above(0.4 * arm)))]
+        keys += [Key(at(0.82), standing(8, side)), Key(at(0.92), standing(9, side)), Key(1.0, (0.0, 0.0, 0.0))]
+        keys.sort(key=lambda k: k.t)
+        # 일어서기 전까지 손은 그때 어깨에서 팔이 닿는 거리 안에 둔다 (팔이 짧은 체형은 그만큼 일찍 땅을 밀고 손을 뗀다).
+        # 몸통 키 시점에도 손 키를 둬 사이에서 팔이 늘어나지 않게 한다
+        hi = at(0.82)
+        known = {round(k.t, 6) for k in keys}
+        keys += [Key(t, sample(keys, t)) for t, _, _ in body if 0.0 < t < hi and round(t, 6) not in known]
+        keys.sort(key=lambda k: k.t)
+        for k in keys:
+            if k.t < hi:
+                v = within_reach(k.t, side, k.value)
+                if v != k.value:
+                    k.value, k.interp = v, BEZIER
+        hands[side] = _hold(keys)
+        ch.append(Channel(f"hand_ik.{side}", "loc", hands[side]))
+    return Motion(p, ch, 0.0)
+
+
 _BUILDERS = {"WALK": _gait, "RUN": _gait, "IDLE": _idle, "HAPPY": _happy, "JUMP": _jump, "ATTACK": _attack,
-             "HIT": _hit, "DEATH": _death}
+             "HIT": _hit, "DEATH": _death, "EMERGE": _emerge}
 
 
 def facts(m: Motion, fps: int = 24) -> str:

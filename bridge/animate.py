@@ -45,7 +45,9 @@ def measure_body(rig, facing="-Y"):
         hand_height[side] = hand.z
         pv = torso - hand
         pivot[side] = (pv.dot(left), pv.dot(front), pv.dot(up))
-    return poseclip.Body(leg, arm, shoulder, hand_height, pivot)
+    # 머리끝 높이: 가장 높은 디폼 본 끝 (Rigify 머리 본 꼬리가 정수리)
+    height = max((mw @ bone.tail_local).z for bone in b if bone.use_deform)
+    return poseclip.Body(leg, arm, shoulder, hand_height, pivot, height)
 
 
 def char_axes(facing):
@@ -70,13 +72,8 @@ def fcurves(rig):
     return list(ad.action.fcurves)
 
 
-def apply_motion(context, rig, motion, name, facing="-Y"):
-    """새 액션을 만들어 리그에 넣는다. 반환: 액션."""
-    p = motion.params
-    n = p.cycle_frames
-    axes = char_axes(facing)
-    left, front, up = axes
-
+def prepare_rig(rig):
+    """IK 컨트롤이 Root 를 따르게 하고 모든 포즈를 레스트로 둔다 (키 값을 레스트 기준으로 계산하기 위해)."""
     for bone, prop in PARENT_SWITCHES.items():
         pb = rig.pose.bones.get(bone)
         if pb is not None and prop in pb:
@@ -90,12 +87,17 @@ def apply_motion(context, rig, motion, name, facing="-Y"):
     for pb in rig.pose.bones:
         pb.matrix_basis.identity()
 
+
+def new_action(rig, name, marker="airig_motion"):
+    """리그에 새 액션을 만들어 넣는다. 반환: (액션, 이전 활성 액션 — 다 쓴 뒤 정리할 것 또는 None).
+
+    같은 이름으로 다시 만들면 이전 생성본(marker 속성이 있는 액션)을 교체한다 (AI 보정 라운드마다 .001 이 쌓이지 않게).
+    NLA 스트립·복제 리그 등 다른 곳에서도 쓰면 지우지 않고 이름만 바꿔 보존한다.
+    """
     rig.animation_data_create()
     old = rig.animation_data.action
-    # 같은 이름으로 다시 만들면 이전 생성본을 교체한다 (AI 보정 라운드마다 .001 이 쌓이지 않게).
-    # NLA 스트립·복제 리그 등 다른 곳에서도 쓰면 지우지 않고 이름만 바꿔 보존한다
     prev = bpy.data.actions.get(name)
-    if prev is not None and "airig_motion" in prev:
+    if prev is not None and marker in prev:
         if old == prev:
             rig.animation_data.action = None
             old = None
@@ -106,6 +108,18 @@ def apply_motion(context, rig, motion, name, facing="-Y"):
     action = bpy.data.actions.new(name)
     action.use_fake_user = True
     rig.animation_data.action = action
+    return action, old
+
+
+def apply_motion(context, rig, motion, name, facing="-Y"):
+    """새 액션을 만들어 리그에 넣는다. 반환: 액션."""
+    p = motion.params
+    n = p.cycle_frames
+    axes = char_axes(facing)
+    left, front, up = axes
+
+    prepare_rig(rig)
+    action, old = new_action(rig, name)
 
     # 1) 모든 포즈를 레스트로 둔 채 키 값을 계산한다. Rigify 컨트롤 중에는 use_local_location 이 꺼진 본도 있어
     #    축을 직접 계산하지 않고 convert_space(POSE → LOCAL)로 바꾼다. 자식 본(hips·chest)은 부모 기준 상대값이 된다

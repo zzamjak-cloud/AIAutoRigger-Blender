@@ -97,11 +97,13 @@ for motion in locomotion.MOTIONS:
         curves = animate.fcurves(rig)
         points = [kp for fc in curves for kp in fc.keyframe_points]
         per_curve = max(len(fc.keyframe_points) for fc in curves)
-        check(per_curve <= 9, f"{motion}/{style}: 커브당 키 {per_curve}개 (매 프레임 {n}개 대비)")
+        check(per_curve <= (14 if motion == "EMERGE" else 9), f"{motion}/{style}: 커브당 키 {per_curve}개 (매 프레임 {n}개 대비)")
         reach = max(animate.leg_reach(bpy.context, rig, range(1, n + 2)).values())
         check(reach <= animate.REACH_LIMIT + 0.002, f"{motion}/{style}: 발이 다리 길이 안 (최대 {reach:.3f})")
         check(all(kp.handle_left_type == "AUTO_CLAMPED" for kp in points), f"{motion}/{style}: Auto-Clamped 베지어 핸들")
-        lowest = min(mesh_min_z(f) for f in range(1, n + 2, max(1, n // 8)))
+        # 기어오르기는 땅속에서 시작하므로 일어선 뒤(마지막 15%)만 본다
+        first = 1 + round(0.85 * n) if motion == "EMERGE" else 1
+        lowest = min(mesh_min_z(f) for f in range(first, n + 2, max(1, n // 8)))
         # 쓰러지는 동안은 IK 무릎이 잠깐 바닥에 스치는 것을 허용한다
         limit = -0.05 if motion == "DEATH" else -0.03
         check(lowest > limit, f"{motion}/{style}: 메시가 바닥을 뚫지 않음 (최저 {lowest:.3f}m)")
@@ -145,6 +147,18 @@ for motion in locomotion.MOTIONS:
         if motion == "HIT":
             pushed = max((world("DEF-spine", f) - world("DEF-spine", 1)).length for f in range(1, n + 2))
             check(pushed > 0.03, f"HIT/{style}: 몸통 밀림 {100 * pushed:.0f}cm")
+        if motion == "EMERGE":
+            scene.frame_set(1)
+            ev = obj.evaluated_get(bpy.context.evaluated_depsgraph_get())
+            m = ev.to_mesh()
+            top = max((obj.matrix_world @ v.co).z for v in m.vertices)
+            ev.to_mesh_clear()
+            check(top < 0.0, f"EMERGE/{style}: 첫 프레임은 머리끝까지 땅속 (최고 {top:.2f}m)")
+            check(abs(world("DEF-spine", 1 + n).z - rest_spine_z) < 1e-3, f"EMERGE/{style}: 끝에 레스트 높이로 일어섬")
+            arm_len = animate.measure(rig)[1]
+            stretch = max(((world(f"hand_ik.{s}", f) - world(f"ORG-upper_arm.{s}", f)).length / arm_len)
+                          for s in "LR" for f in range(1, n + 2, 2))
+            check(stretch < 1.12, f"EMERGE/{style}: 팔이 크게 늘어나지 않음 (어깨→손 최대 {stretch:.2f}× 팔 길이)")
         if motion == "DEATH":
             end = world("DEF-spine", 1 + n).z
             check(end < 0.45 * rest_spine_z, f"DEATH/{style}: 골반이 바닥 근처 ({100 * end:.0f}cm, 서 있을 때 {100 * rest_spine_z:.0f}cm)")

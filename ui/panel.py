@@ -73,6 +73,20 @@ class AIRIG_PT_main(bpy.types.Panel):
                 row.operator("airig.save_motion_library", icon="FILE_TICK", text="Save")
             for line in _wrap(state.anim_summary, 48)[:4]:
                 box.label(text=line)
+            box = layout.box()
+            row = box.row()
+            row.label(text="모션 템플릿", icon="ASSET_MANAGER")
+            row.operator("airig.open_template_dir", text="", icon="FILE_FOLDER")
+            row = box.row(align=True)
+            row.prop(state, "anim_template_type", text="")
+            row.prop(state, "anim_template_motion", text="")
+            box.operator("airig.apply_template", icon="PLAY")
+            row = box.row(align=True)
+            row.prop(state, "anim_template_new_type", text="Type")
+            row.prop(state, "anim_template_name", text="Name")
+            row = box.row(align=True)
+            row.operator("airig.register_template", text="Register Active", icon="FILE_TICK").all_actions = False
+            row.operator("airig.register_template", text="Register All", icon="DOCUMENTS").all_actions = True
         if state.review_summary or state.proposals:
             box = layout.box()
             box.label(text="AI 검토", icon="INFO")

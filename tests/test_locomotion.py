@@ -22,7 +22,9 @@ class LocomotionTest(unittest.TestCase):
                 m = L.generate(L.preset(motion, style), LEG, ARM)
                 self.assertEqual(m.loop, motion in L.LOOPING)
                 for c in m.channels:
-                    self.assertLessEqual(len(c.keys), 9, f"{motion} {c.bone} {c.kind}: 키가 너무 많음")
+                    # 기어오르기는 땅속 → 손 → 머리 → 무릎 → 일어섬의 긴 동작이라 키가 더 있다
+                    limit = 14 if motion == "EMERGE" else 9
+                    self.assertLessEqual(len(c.keys), limit, f"{motion} {c.bone} {c.kind}: 키가 너무 많음")
                     self.assertEqual([k.t for k in c.keys], sorted(k.t for k in c.keys), f"{motion} {c.bone}: 키 순서")
                     if c.bone == "root":  # 전진은 선형 키
                         continue
@@ -32,6 +34,10 @@ class LocomotionTest(unittest.TestCase):
                     else:
                         # 단발 동작은 0 에서 시작해 1 에서 끝나고, 사망을 뺀 나머지는 레스트로 돌아온다
                         self.assertEqual((c.keys[0].t, c.keys[-1].t), (0.0, 1.0), f"{motion} {c.bone}: 단발 구간")
+                        if motion == "EMERGE":  # 땅속에서 시작해 레스트로 끝난다
+                            if c.kind in ("loc", "rot"):
+                                self.assertEqual(c.keys[-1].value, (0.0, 0.0, 0.0), f"EMERGE {c.bone}: 레스트로 끝남")
+                            continue
                         if c.kind == "loc":
                             self.assertEqual(c.keys[0].value, (0.0, 0.0, 0.0), f"{motion} {c.bone}: 레스트 위치에서 시작")
                         if motion != "DEATH":
@@ -70,6 +76,27 @@ class LocomotionTest(unittest.TestCase):
             self.assertEqual((yaw[1] > 0) if sgn > 0 else (yaw[1] < 0), True, f"{side}: 준비 때 그쪽으로 몸을 돎")
             self.assertEqual((yaw[2] < 0) if sgn > 0 else (yaw[2] > 0), True, f"{side}: 타격 때 반대로 돎")
         self.assertEqual(L.clamp({"motion": "ATTACK", "attack_side": "X"}).attack_side, "R")
+
+    def test_emerge_climbs_out_of_the_ground(self):
+        heights = {"head": 2.28, "shoulder": 1.41, "hand": 0.77, "torso": 0.76, "shoulder_side": 0.46, "shoulder_fwd": -0.15}
+        for style in L.STYLES:
+            p = L.preset("EMERGE", style)
+            m = L.generate(p, 0.6, 0.8, heights)
+            torso = channel(m, "torso", "loc").keys
+            self.assertLessEqual(torso[0].value[2], -p.bury_depth * heights["head"] + 1e-9, f"{style}: 머리까지 땅속에서 시작")
+            zs = [k.value[2] for k in torso]
+            self.assertEqual(zs, sorted(zs), f"{style}: 몸통은 계속 올라온다")
+            for side in ("L", "R"):
+                hand = channel(m, f"hand_ik.{side}", "loc").keys
+                planted = [k for k in hand if abs(k.value[2] - (0.15 * 0.8 - heights["hand"])) < 1e-9]
+                self.assertTrue(planted, f"{style} {side}: 손이 땅을 짚는다")
+                self.assertTrue(all(k.value == planted[0].value for k in planted), f"{style} {side}: 짚은 손은 고정")
+                self.assertEqual(planted[0].interp, L.LINEAR, f"{style} {side}: 짚은 구간은 선형")
+                first = next(k.t for k in hand if k.value[2] + heights["hand"] > 0.0)
+                self.assertLess(first, L._emerge_time(p)(0.32), f"{style} {side}: 손이 머리(나오는 키)보다 먼저 나온다")
+        # 실측이 없으면 다리 길이로 어림한다
+        self.assertTrue(L.generate(L.preset("EMERGE", "ZOMBIE"), LEG, ARM).channels)
+        self.assertEqual(L.clamp({"motion": "EMERGE", "bury_depth": 9}).bury_depth, 1.5)
 
     def test_hit_recoils_and_death_lies_down(self):
         hit = L.generate(L.preset("HIT"), LEG, ARM)

@@ -72,10 +72,21 @@ class Body:
     shoulder: dict  # {"L": (side, fwd, up), "R": (...)}
     hand_height: dict  # {"L": m, "R": m}
     pivot: dict | None = None  # 손 IK 레스트 → 몸통(torso) 피벗 오프셋. 없으면 어깨 바로 아래 손 높이로 본다
+    height: float | None = None  # 머리끝 높이 (m). 없으면 다리 길이로 어림한다
 
     def __post_init__(self):
         if self.pivot is None:
             self.pivot = {s: (sh[0], 0.0, 0.0) for s, sh in self.shoulder.items()}
+
+    def heights(self) -> dict | None:
+        """바닥 기준 레스트 실측 (m): 머리끝·어깨·손 IK·몸통 높이와 손 IK → 어깨 (옆, 앞) 거리.
+        머리끝을 모르면 None (생성기가 어림한다)."""
+        if self.height is None:
+            return None
+        hand = min(self.hand_height.values())
+        sh = self.shoulder["L"]
+        return {"head": self.height, "shoulder": hand + sh[2], "hand": hand, "torso": hand + self.pivot["L"][2],
+                "shoulder_side": abs(sh[0]), "shoulder_fwd": sh[1], "torso_fwd": self.pivot["L"][1]}
 
     @classmethod
     def approx(cls, leg: float, arm: float) -> "Body":

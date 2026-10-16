@@ -44,7 +44,7 @@
 
 | 항목 | 동작 |
 |---|---|
-| **Motion / Style** | 루프: Walk·Run·Idle·Happy / 단발: Jump·Attack·Hit·Death × Normal·Zombie 프리셋 |
+| **Motion / Style** | 루프: Walk·Run·Idle·Happy / 단발: Jump·Attack·Hit·Death·Emerge × Normal·Zombie 프리셋 |
 | **Root Motion** | 끄면 제자리(게임 엔진 권장), 켜면 전진한다. 걷기·달리기는 주기마다 이어지고 점프는 체공 중에 한 번 이동한다 |
 | **Generate Motion** | 프리셋으로 바로 생성 (AI 없음) |
 | **Hands** | 손가락 모양. Auto 는 동작에 맞춰 고른다(걷기·대기 힘 뺀 손, 달리기 가볍게 쥔 손, 기쁨 편 손, 맨손 공격 주먹, 무기 공격 손잡이 쥐기, 피격·사망 손가락 펴짐, 좀비 갈퀴 손). Open·Relaxed·Loose Fist·Fist·Grip·Point·Claw 로 고정할 수도 있다 |
@@ -60,6 +60,9 @@
 | Attack | 단발 | 한 손(기본 오른손)을 뒤로 빼며 몸을 비틀고 돌진하며 휘두른 뒤 복귀. 반대 손은 방어 자세 |
 | Hit | 단발 | 충격에 몸통이 뒤로 젖혀지고 밀리며 팔이 벌어졌다가 복귀 |
 | Death | 단발 | 무릎이 꺾이며 뒤(Normal) 또는 앞(Zombie)으로 쓰러져 눕고 끝 자세를 유지 |
+| Emerge | 단발 | 땅속(머리끝까지 묻힘)에서 손이 먼저 땅을 뚫고 나와 짚고, 머리·상체 → 오른 무릎 → 왼발 순서로 기어 올라와 일어선다. 루트는 그대로라 게임에서는 지면이 몸을 가린다 |
+
+Emerge 는 실측한 머리끝·어깨·손 높이로 깊이와 손이 나오는 높이를 정한다. 땅속에서는 상체를 숙이고 고개를 숙여 머리가 큰 체형도 손이 먼저 나오고, 손 키는 그때 어깨에서 팔이 닿는 거리 안에 두어 팔이 늘어나지 않는다(팔이 짧은 체형은 그만큼 일찍 땅을 밀고 손을 뗀다). 묻힌 깊이는 `bury_depth`(키 대비, 기본 1.05)다.
 
 Attack 은 궤적 `attack_kind`(SWING 휘두르기 · THRUST 찌르기 · SLASH_H 가로 베기 · SLASH_V 세로 베기 · OVERHEAD 내려찍기)와 `two_handed`(양손 그립)를 AI 가 고른다.
 
@@ -82,6 +85,25 @@ Attack 은 궤적 `attack_kind`(SWING 휘두르기 · THRUST 찌르기 · SLASH_
 - 발이 땅을 딛는 구간만 선형 보간이라 미끄러지지 않고, 발 굴림은 Rigify `foot_heel_ik` 로 처리해 발끝이 바닥을 뚫지 않는다.
 - 키를 넣은 뒤 모든 프레임에서 엉덩이 → 발목 거리가 다리 길이를 넘지 않는지 리그로 확인하고, 넘는 프레임(점프 도약 직후 등)은 그 구간의 몸통 키(와 같은 시점의 손 키)를 필요한 만큼 내린다. Rigify IK 스트레치로 다리가 늘어나면 Unity Humanoid 에서는 반영되지 않아 발이 뜨기 때문이다. AI Motion·동작 사전 결과에도 똑같이 적용된다.
 - 결과는 `<리그>_<동작>_<스타일>` 액션(Fake User)으로 저장된다. 같은 이름으로 다시 만들면 교체되고, NLA 등 다른 곳에서 쓰는 액션은 `_old` 로 보존된다.
+### 모션 템플릿 (타입·체형별 등록)
+
+생성한 동작을 그래프 에디터에서 손으로 다듬은 뒤 **그 상태 그대로** 템플릿으로 등록하고, 같은 타입의 다른 캐릭터에 다시 쓴다. 사이드바 **모션 템플릿** 상자에서 한다.
+
+| 항목 | 동작 |
+|---|---|
+| **Type + 템플릿 → Apply Template** | 고른 템플릿으로 이 캐릭터의 액션(`<메시>_<이름>`)을 만든다. Type 이 **Auto (체형)** 면 다리·팔·폭·두께 비율이 가장 비슷한 타입을 쓴다 |
+| **Type / Name** | 등록할 타입 이름(비우면 메시 이름, 예: `Zombie_Thin`)과 템플릿 이름(비우면 액션 이름에서 메시·리그 이름을 뺀 이름, `Zombie_Thin_Attack_R` → `Attack_R`) |
+| **Register Active** | 활성 액션을 등록한다 |
+| **Register All** | 활성 액션과 NLA 의 모든 액션을 등록한다 |
+| 폴더 아이콘 | 템플릿 폴더를 연다 |
+
+- 키 타이밍, 성분별 보간(선형/베지어), 손으로 고친 핸들, 일부 성분에만 넣은 키, 사원수 부호, Cycles 유무, 직접 키를 넣은 다른 본(턱·팔 IK 회전 등)까지 그대로 담는다. 같은 리그에 다시 적용하면 원본과 일치한다(테스트 기준 오차 0.00001).
+- 값은 캐릭터 기준으로 저장한다: 위치는 다리·팔 길이 비율, 손 IK 는 어깨 기준 팔 길이 비율, 회전은 캐릭터 축 기준 레스트 대비 회전(손 IK 는 절대 방향). 그래서 레스트 자세(A-포즈·팔 내림)나 크기가 다른 캐릭터에도 같은 움직임이 된다. 적용한 뒤 발이 다리 길이를 넘는 프레임은 몸통 키를 내려 보정한다(Unity Humanoid 에서 발이 뜨지 않게).
+- 같은 타입·이름으로 다시 등록하면 버전이 오르고 이전 파일은 `<타입>/_history/<이름>.v<N>.json` 으로 보관된다. 드롭다운 설명에 버전·길이·루프 여부가 보인다.
+- 루프는 Cycles 가 실제로 반복하는 키 구간을 길이로 쓴다. 액션 프레임 범위가 이와 다르면 등록할 때 경고한다(그대로 FBX 로 내보내면 Unity 클립이 루프 중간에서 끊긴다).
+- 템플릿 폴더는 기본이 Blender 설정 폴더의 `ai_auto_rigger/templates/` 이고, 애드온 환경 설정 **모션 템플릿 폴더** 로 팀 공유 폴더를 지정할 수 있다. 같은 타입·이름은 사용자 폴더가 내장 템플릿을 덮는다.
+- 내장 템플릿: `Zombie_Thin` — walk·Run·Idle(루프), Attack_R·Attack_L·Attack_C(단발).
+
 - **Export Game FBX** 가 NLA 에 올린 액션(뮤트 포함)과 활성 액션을 각 액션 구간대로 구워 액션 이름의 테이크로 내보내므로 Unity 에서 Humanoid 클립으로 쓴다. 루프 동작은 Loop Time 을 켜고, 단발 동작은 끈다.
 
 ### Unity 로 내보내기
@@ -146,6 +168,7 @@ scripts/dev_run.sh --background --python tests/blender_rig_test.py  # 2족·4족
 scripts/dev_run.sh --background --python tests/blender_finger_test.py  # 손가락 검출·Rigify 손가락 굽힘 (곧은 손·갈고리 손·벙어리장갑형)
 scripts/dev_run.sh --background --python tests/blender_face_test.py -- dist/face_test  # 턱·눈 리깅, Unity 이름·간소화 내보내기
 scripts/dev_run.sh --background --python tests/blender_motion_test.py -- dist/motion_test  # 루프·단발·공격 궤적·동작 사전·FBX 굽기·AI Motion(가짜 CLI)
+scripts/dev_run.sh --background --python tests/blender_template_test.py -- dist/template_test  # 모션 템플릿: 다른 체형 적용·등록 왕복·버전·Auto 체형
 scripts/dev_run.sh --background --python tests/blender_hand_test.py -- dist/hand_test      # 손 모양(주먹·무기 쥐기·갈퀴·가리키기)·갈고리 손·벙어리장갑·FBX 손가락
 scripts/dev_run.sh --background --python tests/blender_ai_test.py   # AI Auto Rig: API(모의 SDK)·Claude Code·Codex(가짜 CLI), 비용 없음
 scripts/dev_run.sh --background --python tests/blender_review_test.py  # AI 검토 라운드·보정안 적용 (가짜 Codex CLI)

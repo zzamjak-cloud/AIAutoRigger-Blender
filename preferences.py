@@ -40,6 +40,11 @@ class AIRIG_AP_preferences(bpy.types.AddonPreferences):
         default="high",
     )
     review_max_turns: bpy.props.IntProperty(name="Review Max Rounds", default=4, min=1, max=10)
+    template_dir: bpy.props.StringProperty(
+        name="모션 템플릿 폴더",
+        description="모션 템플릿을 등록·읽는 폴더 (팀 공유 폴더 등). 비우면 Blender 사용자 설정 폴더의 ai_auto_rigger/templates",
+        subtype="DIR_PATH",
+    )
 
     def draw(self, context):
         layout = self.layout
@@ -67,6 +72,7 @@ class AIRIG_AP_preferences(bpy.types.AddonPreferences):
         row.prop(self, "effort")
         row.prop(self, "review_effort")
         layout.prop(self, "review_max_turns")
+        layout.prop(self, "template_dir")
         layout.label(text="렌더 이미지(메시 형상)가 선택한 AI 서비스로 전송됩니다.", icon="INFO")
 
 
